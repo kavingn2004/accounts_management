@@ -43,37 +43,10 @@ class LocalRepository extends FinanceRepository {
     await _store.write(table, rows);
   }
 
-  @override
-  Future<Json?> dashboard() async {
-    double sum(String table, String key) => _store
-        .read(table)
-        .fold(0.0, (a, r) => a + ((r[key] as num?)?.toDouble() ?? 0));
-
-    final income = sum('income', 'amount');
-    final expense = sum('expenses', 'amount');
-    final accounts = income - expense;
-    final investments = sum('investments', 'current_value');
-    final savings = sum('savings_goals', 'saved_amount');
-    final receivable = sum('debtors', 'amount');
-    final payable = sum('creditors', 'amount');
-    final loans = _store
-        .read('loans')
-        .where((r) => r['status'] == 'active')
-        .fold(0.0, (a, r) => a + ((r['outstanding'] as num?)?.toDouble() ?? 0));
-
-    return {
-      'net_worth':
-          accounts + investments + savings + receivable - payable - loans,
-      'month_income': income,
-      'month_expense': expense,
-    };
-  }
-
-  /// Live balance per account, computed from opening balance + every cash
-  /// movement that references the account by name (income, expense, transfers,
-  /// and payment cash-moves). Never stored, so it can't drift.
-  @override
-  Future<List<Json>> accountsWithBalances() async {
+  /// Live balance per account name: opening balance + every cash movement that
+  /// references the account (income +, expense −, transfers, payment moves).
+  /// Single source of truth for both the accounts list and net worth.
+  Map<String, double> _balanceMap() {
     final accounts = _store.read('accounts');
     final balances = <String, double>{
       for (final a in accounts)
@@ -104,10 +77,43 @@ class LocalRepository extends FinanceRepository {
     for (final m in _store.read('cash_moves')) {
       add(m['account']?.toString(), amt(m));
     }
+    return balances;
+  }
 
-    return accounts
-        .map((a) => {...a, 'balance': balances[(a['name'] ?? '').toString()] ?? 0})
+  @override
+  Future<List<Json>> accountsWithBalances() async {
+    final balances = _balanceMap();
+    return _store
+        .read('accounts')
+        .map((a) =>
+            {...a, 'balance': balances[(a['name'] ?? '').toString()] ?? 0})
         .toList();
+  }
+
+  @override
+  Future<Json?> dashboard() async {
+    double sum(String table, String key) => _store
+        .read(table)
+        .fold(0.0, (a, r) => a + ((r[key] as num?)?.toDouble() ?? 0));
+
+    // Cash/bank component = sum of account balances (includes opening balances
+    // plus every income/expense/transfer tied to an account).
+    final accountsTotal = _balanceMap().values.fold(0.0, (a, b) => a + b);
+    final investments = sum('investments', 'current_value');
+    final savings = sum('savings_goals', 'saved_amount');
+    final receivable = sum('debtors', 'amount');
+    final payable = sum('creditors', 'amount');
+    final loans = _store
+        .read('loans')
+        .where((r) => r['status'] == 'active')
+        .fold(0.0, (a, r) => a + ((r['outstanding'] as num?)?.toDouble() ?? 0));
+
+    return {
+      'net_worth':
+          accountsTotal + investments + savings + receivable - payable - loans,
+      'month_income': sum('income', 'amount'),
+      'month_expense': sum('expenses', 'amount'),
+    };
   }
 
   /// Populate sample data the first time the app runs.

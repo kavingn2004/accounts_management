@@ -28,17 +28,19 @@ void main() {
     expect(await repo.list('income'), isEmpty);
   });
 
-  test('dashboard computes net worth and month totals', () async {
+  test('dashboard net worth includes opening balance + account flows', () async {
     final repo = await _repo();
-    await repo.insert('income', {'amount': 200});
-    await repo.insert('expenses', {'amount': 50});
+    await repo.insert('accounts',
+        {'name': 'Cash', 'type': 'cash', 'opening_balance': 1000});
+    await repo.insert('income', {'amount': 200, 'account': 'Cash'});
+    await repo.insert('expenses', {'amount': 50, 'account': 'Cash'});
     await repo.insert('loans', {'outstanding': 30, 'status': 'active'});
 
     final d = await repo.dashboard();
     expect(d!['month_income'], 200);
     expect(d['month_expense'], 50);
-    // accounts(200-50) - loans(30) = 120
-    expect(d['net_worth'], 120);
+    // accountsTotal(1000 + 200 - 50 = 1150) - loans(30) = 1120
+    expect(d['net_worth'], 1120);
   });
 
   test('seedIfNeeded seeds once only', () async {

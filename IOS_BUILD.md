@@ -12,14 +12,11 @@ git remote add origin https://github.com/<your-user>/accounts_app.git
 git push -u origin main
 ```
 
-## 2. Pick your bundle identifier
-The app currently uses `com.example.accounts.accountsApp`. App Store needs a
-unique ID under your own domain, e.g. `com.kavin.accounts`.
-- Change it in `ios/Runner.xcodeproj/project.pbxproj` (all 3
-  `PRODUCT_BUNDLE_IDENTIFIER` lines) **and** in `codemagic.yaml`
-  (`ios_signing.bundle_identifier`).
-- Register it: Apple Developer → Certificates, IDs & Profiles → Identifiers →
-  new **App ID** with that bundle id.
+## 2. Bundle identifier
+The app's bundle id is **`com.kavin.accounts`** (set in iOS, Android, and
+`codemagic.yaml`). Register it with Apple:
+- Apple Developer → Certificates, IDs & Profiles → Identifiers → new **App ID**
+  `com.kavin.accounts`.
 - App Store Connect → Apps → **+** → create the app with that bundle id.
 
 ## 3. Create an App Store Connect API key (for signing)

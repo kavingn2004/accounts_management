@@ -1,4 +1,4 @@
-package com.example.accounts.accounts_app
+package com.kavin.accounts
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -36,7 +36,7 @@ workflows:
       xcode: latest
       ios_signing:
         distribution_type: app_store # or: ad_hoc / development
-        bundle_identifier: com.example.accounts.accountsApp
+        bundle_identifier: com.kavin.accounts
     scripts:
       - name: Flutter pub get
         script: flutter pub get

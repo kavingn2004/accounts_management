@@ -1,0 +1,48 @@
+# Codemagic CI — builds the iOS app on a macOS machine in the cloud.
+# Sign up at https://codemagic.io, connect this repo, and run the workflow.
+#
+# Two workflows:
+#   ios-unsigned : builds without an Apple account (proves the build; produces
+#                  a Runner.app you can run in the iOS Simulator). NOT installable
+#                  on a real iPhone.
+#   ios-release  : builds a signed .ipa installable on devices / App Store.
+#                  Requires an Apple Developer account ($99/yr) configured in
+#                  Codemagic (Teams > Code signing identities + App Store Connect).
+
+workflows:
+  ios-unsigned:
+    name: iOS (unsigned, no Apple account)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+    scripts:
+      - name: Flutter pub get
+        script: flutter pub get
+      - name: Build iOS (no code signing)
+        script: flutter build ios --release --no-codesign
+    artifacts:
+      - build/ios/iphoneos/*.app
+
+  ios-release:
+    name: iOS (signed .ipa for device / App Store)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    integrations:
+      app_store_connect: CodemagicAppStore # configure this in Codemagic UI
+    environment:
+      flutter: stable
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store # or: ad_hoc / development
+        bundle_identifier: com.example.accounts.accountsApp
+    scripts:
+      - name: Flutter pub get
+        script: flutter pub get
+      - name: Set up signing
+        script: xcode-project use-profiles
+      - name: Build signed IPA
+        script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa

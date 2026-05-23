@@ -47,6 +47,8 @@ class EntityConfig {
     this.decrementLabel,
     this.interestRateField,
     this.paymentInflow = false,
+    this.exportable = false,
+    this.dateFiltered = false,
   });
 
   final String table;
@@ -81,4 +83,11 @@ class EntityConfig {
   /// For the "add payment" action: true = money comes IN to the chosen account
   /// (debtor repays you); false = money goes OUT (you pay a creditor/loan).
   final bool paymentInflow;
+
+  /// If true, the EntityScreen shows an export menu (CSV / PDF) in the AppBar.
+  final bool exportable;
+
+  /// If true, the EntityScreen shows a date-range filter row (Today/Week/Month/
+  /// Year/All/Custom). Filters and exports use the row's `date` field.
+  final bool dateFiltered;
 }

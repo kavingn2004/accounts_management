@@ -23,10 +23,30 @@ dependencies:
   fl_chart: ^1.2.0
   shared_preferences: ^2.5.5
 
+  # Export (CSV / PDF) for income & expenses
+  pdf: ^3.11.1
+  share_plus: ^10.1.2
+  path_provider: ^2.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon/logo.png"
+  remove_alpha_ios: true
+  background_color_ios: "#0D47A1"
+  adaptive_icon_background: "#0D47A1"
+  adaptive_icon_foreground: "assets/icon/logo.png"
+  web:
+    generate: true
+    image_path: "assets/icon/logo.png"
+    background_color: "#0D47A1"
+    theme_color: "#1565C0"

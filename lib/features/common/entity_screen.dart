@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
 import '../../models/field_spec.dart';
 import '../../services/providers.dart';
+import 'export_service.dart';
 
 /// Generic list + add screen driven entirely by an [EntityConfig].
 /// Used by every module (income, expenses, savings, ...).
@@ -23,7 +25,79 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   late Future<List<Json>> _future;
   List<String> _accountNames = [];
 
+  // Date-range filter state (only used when cfg.dateFiltered is true).
+  _DateRange _dateRange = _DateRange.month;
+  DateTimeRange? _customRange;
+
   EntityConfig get cfg => widget.config;
+
+  /// Returns the inclusive date range the filter is currently set to, or
+  /// null when "All" is active (or when no filter has been applied).
+  DateTimeRange? _activeRange() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    switch (_dateRange) {
+      case _DateRange.today:
+        return DateTimeRange(start: today, end: today);
+      case _DateRange.week:
+        return DateTimeRange(
+          start: today.subtract(const Duration(days: 6)),
+          end: today,
+        );
+      case _DateRange.month:
+        return DateTimeRange(
+          start: DateTime(now.year, now.month, 1),
+          end: DateTime(now.year, now.month + 1, 0),
+        );
+      case _DateRange.year:
+        return DateTimeRange(
+          start: DateTime(now.year, 1, 1),
+          end: DateTime(now.year, 12, 31),
+        );
+      case _DateRange.all:
+        return null;
+      case _DateRange.custom:
+        return _customRange;
+    }
+  }
+
+  /// Apply the date filter to a list of rows. Returns input unchanged when
+  /// the config isn't date-filtered or "All" is selected.
+  List<Json> _applyFilter(List<Json> rows) {
+    if (!cfg.dateFiltered) return rows;
+    final range = _activeRange();
+    if (range == null) return rows;
+    final start = DateTime(range.start.year, range.start.month, range.start.day);
+    final end = DateTime(
+        range.end.year, range.end.month, range.end.day, 23, 59, 59);
+    return rows.where((r) {
+      final d = DateTime.tryParse((r['date'] ?? '').toString());
+      if (d == null) return false;
+      return !d.isBefore(start) && !d.isAfter(end);
+    }).toList();
+  }
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    final initial = _customRange ??
+        DateTimeRange(
+          start: now.subtract(const Duration(days: 7)),
+          end: now,
+        );
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      initialDateRange: initial,
+      saveText: 'Apply',
+    );
+    if (picked != null) {
+      setState(() {
+        _customRange = picked;
+        _dateRange = _DateRange.custom;
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -253,12 +327,61 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     _refresh();
   }
 
+  Future<void> _export(_ExportFormat fmt) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final all = await ref
+          .read(repoProvider)
+          .list(cfg.table, orderBy: cfg.orderBy, ascending: false);
+      final rows = _applyFilter(all);
+      if (rows.isEmpty) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('No ${cfg.title.toLowerCase()} to export')),
+        );
+        return;
+      }
+      if (fmt == _ExportFormat.csv) {
+        await ExportService.exportCsv(cfg, rows);
+      } else {
+        await ExportService.exportPdf(cfg, rows);
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(cfg.title),
         backgroundColor: cfg.color,
+        actions: [
+          if (cfg.exportable)
+            PopupMenuButton<_ExportFormat>(
+              tooltip: 'Export',
+              icon: const Icon(Icons.file_download_outlined),
+              onSelected: _export,
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: _ExportFormat.csv,
+                  child: ListTile(
+                    leading: Icon(Icons.table_chart_outlined),
+                    title: Text('Export CSV'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _ExportFormat.pdf,
+                  child: ListTile(
+                    leading: Icon(Icons.picture_as_pdf_outlined),
+                    title: Text('Export PDF'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
+        ],
       ),
       floatingActionButton: cfg.readOnly
           ? null
@@ -267,139 +390,255 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               backgroundColor: cfg.color,
               child: const Icon(Icons.add),
             ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: FutureBuilder<List<Json>>(
-          future: _future,
-          builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snap.hasError) {
-              return _ErrorView(message: '${snap.error}');
-            }
-            final rows = snap.data ?? [];
-            if (rows.isEmpty) {
-              return ListView(
-                children: [
-                  const SizedBox(height: 120),
-                  Center(child: Text('No ${cfg.title.toLowerCase()} yet')),
-                ],
-              );
-            }
-            return ListView.separated(
-              itemCount: rows.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, i) {
-                final r = rows[i];
-                return Dismissible(
-                  key: ValueKey(r['id']),
-                  direction: cfg.readOnly
-                      ? DismissDirection.none
-                      : DismissDirection.endToStart,
-                  background: Container(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20),
-                    child: const Icon(Icons.delete),
-                  ),
-                  confirmDismiss: (_) => _confirmDelete(r),
-                  onDismissed: (_) => _delete(r),
-                  child: ListTile(
-                    leading: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: cfg.color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
+      body: Column(
+        children: [
+          if (cfg.dateFiltered) _buildFilterBar(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: FutureBuilder<List<Json>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snap.hasError) {
+                    return _ErrorView(message: '${snap.error}');
+                  }
+                  final allRows = snap.data ?? [];
+                  final rows = _applyFilter(allRows);
+                  if (rows.isEmpty) {
+                    final hasAny = allRows.isNotEmpty;
+                    final msg = hasAny && cfg.dateFiltered
+                        ? 'No ${cfg.title.toLowerCase()} in this range'
+                        : 'No ${cfg.title.toLowerCase()} yet';
+                    return ListView(
+                      children: [
+                        const SizedBox(height: 120),
+                        Center(child: Text(msg)),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      if (cfg.dateFiltered) _summaryBanner(rows),
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: rows.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, i) =>
+                              _buildRow(context, rows[i]),
+                        ),
                       ),
-                      child: Icon(cfg.icon, color: cfg.color, size: 20),
-                    ),
-                    title: Text(cfg.titleOf(r)),
-                    subtitle: cfg.subtitleOf != null
-                        ? Text(cfg.subtitleOf!(r))
-                        : null,
-                    trailing: cfg.readOnly
-                        ? (cfg.trailingOf != null
-                            ? Text(cfg.trailingOf!(r),
-                                style:
-                                    const TextStyle(fontWeight: FontWeight.bold))
-                            : null)
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (cfg.trailingOf != null)
-                                Text(cfg.trailingOf!(r),
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold)),
-                              PopupMenuButton<String>(
-                                icon: const Icon(Icons.more_vert),
-                                onSelected: (v) async {
-                                  if (v == 'add_amount') {
-                                    _addAmount(r);
-                                  } else if (v == 'pay') {
-                                    _payAmount(r);
-                                  } else if (v == 'edit') {
-                                    _openSheet(existing: r);
-                                  } else if (v == 'delete') {
-                                    if (await _confirmDelete(r)) _delete(r);
-                                  }
-                                },
-                                itemBuilder: (_) => [
-                                  if (cfg.incrementField != null)
-                                    PopupMenuItem(
-                                      value: 'add_amount',
-                                      child: ListTile(
-                                        leading: Icon(Icons.add_circle_outline,
-                                            color: cfg.color),
-                                        title: Text(
-                                            cfg.incrementLabel ?? 'Add amount'),
-                                        contentPadding: EdgeInsets.zero,
-                                      ),
-                                    ),
-                                  if (cfg.decrementField != null)
-                                    PopupMenuItem(
-                                      value: 'pay',
-                                      child: ListTile(
-                                        leading: Icon(Icons.payments_outlined,
-                                            color: cfg.color),
-                                        title: Text(
-                                            cfg.decrementLabel ?? 'Add payment'),
-                                        contentPadding: EdgeInsets.zero,
-                                      ),
-                                    ),
-                                  const PopupMenuItem(
-                                    value: 'edit',
-                                    child: ListTile(
-                                      leading: Icon(Icons.edit_outlined),
-                                      title: Text('Edit'),
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'delete',
-                                    child: ListTile(
-                                      leading: Icon(Icons.delete_outline,
-                                          color: AppTheme.cExpense),
-                                      title: Text('Delete'),
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRow(BuildContext context, Json r) {
+    return Dismissible(
+      key: ValueKey(r['id']),
+      direction: cfg.readOnly
+          ? DismissDirection.none
+          : DismissDirection.endToStart,
+      background: Container(
+        color: Theme.of(context).colorScheme.errorContainer,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const Icon(Icons.delete),
+      ),
+      confirmDismiss: (_) => _confirmDelete(r),
+      onDismissed: (_) => _delete(r),
+      child: ListTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: cfg.color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(cfg.icon, color: cfg.color, size: 20),
+        ),
+        title: Text(cfg.titleOf(r)),
+        subtitle:
+            cfg.subtitleOf != null ? Text(cfg.subtitleOf!(r)) : null,
+        trailing: cfg.readOnly
+            ? (cfg.trailingOf != null
+                ? Text(cfg.trailingOf!(r),
+                    style: const TextStyle(fontWeight: FontWeight.bold))
+                : null)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (cfg.trailingOf != null)
+                    Text(cfg.trailingOf!(r),
+                        style:
+                            const TextStyle(fontWeight: FontWeight.bold)),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (v) async {
+                      if (v == 'add_amount') {
+                        _addAmount(r);
+                      } else if (v == 'pay') {
+                        _payAmount(r);
+                      } else if (v == 'edit') {
+                        _openSheet(existing: r);
+                      } else if (v == 'delete') {
+                        if (await _confirmDelete(r)) _delete(r);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      if (cfg.incrementField != null)
+                        PopupMenuItem(
+                          value: 'add_amount',
+                          child: ListTile(
+                            leading: Icon(Icons.add_circle_outline,
+                                color: cfg.color),
+                            title:
+                                Text(cfg.incrementLabel ?? 'Add amount'),
+                            contentPadding: EdgeInsets.zero,
                           ),
-                    onTap: cfg.readOnly ? null : () => _openSheet(existing: r),
+                        ),
+                      if (cfg.decrementField != null)
+                        PopupMenuItem(
+                          value: 'pay',
+                          child: ListTile(
+                            leading: Icon(Icons.payments_outlined,
+                                color: cfg.color),
+                            title:
+                                Text(cfg.decrementLabel ?? 'Add payment'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: ListTile(
+                          leading: Icon(Icons.edit_outlined),
+                          title: Text('Edit'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_outline,
+                              color: AppTheme.cExpense),
+                          title: Text('Delete'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ],
                   ),
-                );
-              },
-            );
-          },
+                ],
+              ),
+        onTap: cfg.readOnly ? null : () => _openSheet(existing: r),
+      ),
+    );
+  }
+
+  Widget _buildFilterBar() {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: BoxDecoration(
+        color: theme.cardTheme.color,
+        border: Border(
+          bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5)),
+        ),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final r in _DateRange.values)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(_chipLabel(r)),
+                  selected: _dateRange == r,
+                  showCheckmark: false,
+                  selectedColor: cfg.color,
+                  labelStyle: TextStyle(
+                    color: _dateRange == r
+                        ? Colors.white
+                        : theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                  onSelected: (_) {
+                    if (r == _DateRange.custom) {
+                      _pickCustomRange();
+                    } else {
+                      setState(() => _dateRange = r);
+                    }
+                  },
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
+
+  String _chipLabel(_DateRange r) {
+    if (r == _DateRange.custom && _customRange != null) {
+      final f = DateFormat('d MMM');
+      return '${f.format(_customRange!.start)} – ${f.format(_customRange!.end)}';
+    }
+    return r.label;
+  }
+
+  Widget _summaryBanner(List<Json> rows) {
+    final total = rows.fold<double>(
+      0,
+      (a, r) => a + ((r['amount'] as num?)?.toDouble() ?? 0),
+    );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: cfg.color.withValues(alpha: 0.08),
+      child: Row(
+        children: [
+          Text(
+            '${rows.length} ${rows.length == 1 ? 'entry' : 'entries'}',
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+          ),
+          const Spacer(),
+          Text(
+            'Total: ${money(total)}',
+            style: TextStyle(
+              color: cfg.color,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
+enum _DateRange { today, week, month, year, all, custom }
+
+extension _DateRangeLabel on _DateRange {
+  String get label => switch (this) {
+        _DateRange.today => 'Today',
+        _DateRange.week => 'Week',
+        _DateRange.month => 'Month',
+        _DateRange.year => 'Year',
+        _DateRange.all => 'All',
+        _DateRange.custom => 'Custom',
+      };
+}
+
+enum _ExportFormat { csv, pdf }
 
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.message});

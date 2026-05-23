@@ -18,7 +18,7 @@ class HomeShell extends ConsumerWidget {
     return Scaffold(
       drawer: const AppDrawer(),
       appBar: AppBar(
-        title: const Text('My Accounts'),
+        title: const Text('Accounflow'),
         actions: [
           IconButton(
             tooltip: 'Alerts',

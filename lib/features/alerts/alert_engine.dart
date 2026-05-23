@@ -38,6 +38,7 @@ class AlertEngine {
             severity: AlertSeverity.warning,
             title: '$name due ${days == 0 ? 'today' : 'in $days day(s)'}',
             message: '$amt due on day $dueDay of the month.',
+            triggeredAt: today,
           ));
         }
       } else {
@@ -46,6 +47,7 @@ class AlertEngine {
           severity: AlertSeverity.critical,
           title: '$name overdue',
           message: '$amt was due on day $dueDay (${today.day - dueDay} day(s) ago).',
+          triggeredAt: today,
         ));
       }
     }
@@ -64,6 +66,7 @@ class AlertEngine {
           severity: AlertSeverity.info,
           title: '$lender almost cleared 🎉',
           message: 'Only ${money(outstanding)} left to pay off.',
+          triggeredAt: today,
         ));
       } else {
         out.add(AppAlert(
@@ -71,6 +74,7 @@ class AlertEngine {
           severity: AlertSeverity.info,
           title: '$lender EMI ${money(emi)}',
           message: 'About ${money(interest)} interest accrues this month.',
+          triggeredAt: today,
         ));
       }
     }
@@ -88,6 +92,7 @@ class AlertEngine {
           title: 'Over budget',
           message:
               'Spent ${money(monthExpense)} of ${money(monthlyBudget)} (${pct.round()}%).',
+          triggeredAt: today,
         ));
       } else if (pct >= 80) {
         out.add(AppAlert(
@@ -96,6 +101,7 @@ class AlertEngine {
           title: 'Approaching budget',
           message:
               'Spent ${money(monthExpense)} of ${money(monthlyBudget)} (${pct.round()}%).',
+          triggeredAt: today,
         ));
       }
     }
@@ -113,6 +119,7 @@ class AlertEngine {
           severity: AlertSeverity.info,
           title: '$name reached 🎉',
           message: 'You hit your ${money(target)} goal.',
+          triggeredAt: today,
         ));
       } else if (pct >= 50) {
         out.add(AppAlert(
@@ -120,6 +127,7 @@ class AlertEngine {
           severity: AlertSeverity.info,
           title: '$name ${pct.round()}% funded',
           message: '${money(saved)} of ${money(target)} saved.',
+          triggeredAt: today,
         ));
       }
     }
@@ -142,6 +150,7 @@ class AlertEngine {
             severity: AlertSeverity.critical,
             title: '$who overdue',
             message: '$amt ($verb) was due ${-days} day(s) ago.',
+            triggeredAt: today,
           ));
         } else if (days <= debtLeadDays) {
           out.add(AppAlert(
@@ -149,6 +158,7 @@ class AlertEngine {
             severity: AlertSeverity.warning,
             title: '$who due ${days == 0 ? 'today' : 'in $days day(s)'}',
             message: '$amt $verb.',
+            triggeredAt: today,
           ));
         }
       }
@@ -168,6 +178,7 @@ class AlertEngine {
         title: 'Spending exceeds income',
         message:
             'This month: spent ${money(monthExpense)} vs earned ${money(monthIncome)}.',
+        triggeredAt: today,
       ));
     }
 

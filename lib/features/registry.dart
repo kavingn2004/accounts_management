@@ -14,6 +14,8 @@ class Modules {
     icon: Icons.south_west,
     color: AppTheme.cIncome,
     orderBy: 'date',
+    exportable: true,
+    dateFiltered: true,
     fields: const [
       FieldSpec('amount', 'Amount', type: FieldType.number, required: true),
       FieldSpec('source', 'Source'),
@@ -36,6 +38,8 @@ class Modules {
     icon: Icons.north_east,
     color: AppTheme.cExpense,
     orderBy: 'date',
+    exportable: true,
+    dateFiltered: true,
     fields: const [
       FieldSpec('amount', 'Amount', type: FieldType.number, required: true),
       FieldSpec('payee', 'Payee'),

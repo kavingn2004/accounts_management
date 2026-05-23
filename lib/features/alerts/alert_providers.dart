@@ -38,6 +38,8 @@ final alertsProvider = FutureProvider<List<AppAlert>>((ref) async {
         severity: alertSeverityFrom(r['severity']),
         title: (r['title'] ?? '').toString(),
         message: (r['message'] ?? '').toString(),
+        triggeredAt: DateTime.tryParse((r['created_at'] ?? '').toString()) ??
+            DateTime.now(),
       ));
 
   final all = [...computed, ...custom]

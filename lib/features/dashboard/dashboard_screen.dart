@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
+import '../../models/field_spec.dart';
 import '../../services/providers.dart';
+import '../common/entity_screen.dart';
+import '../registry.dart';
 import 'analytics.dart';
 
 /// Analytics dashboard: net-worth banner, income/expense cards, and charts
@@ -59,6 +62,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     await _future;
   }
 
+  void _openModule(BuildContext context, EntityConfig cfg) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => EntityScreen(config: cfg)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Reload whenever data changes elsewhere (e.g. a bank/income added).
@@ -107,6 +116,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       value: money(periodIncome),
                       icon: Icons.south_west,
                       color: AppTheme.cIncome,
+                      onTap: () => _openModule(context, Modules.income),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -116,6 +126,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       value: money(periodExpense),
                       icon: Icons.north_east,
                       color: AppTheme.cExpense,
+                      onTap: () => _openModule(context, Modules.expenses),
                     ),
                   ),
                 ],
@@ -480,38 +491,54 @@ class _MetricCard extends StatelessWidget {
     required this.value,
     required this.icon,
     required this.color,
+    this.onTap,
   });
 
   final String label;
   final String value;
   final IconData icon;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  if (onTap != null) ...[
+                    const Spacer(),
+                    Icon(Icons.chevron_right,
+                        size: 18, color: Colors.grey.shade400),
+                  ],
+                ],
               ),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(height: 10),
-            Text(label,
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Text(label,
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/theme.dart';
 import '../../services/providers.dart';
@@ -61,6 +62,7 @@ class AlertsScreen extends ConsumerWidget {
                   'message': msgC.text.trim(),
                   'severity': sev.name,
                   'type': 'custom',
+                  'created_at': DateTime.now().toIso8601String(),
                 });
                 if (ctx.mounted) Navigator.pop(ctx, true);
               },
@@ -186,6 +188,22 @@ class _AlertCard extends StatelessWidget {
                     Text(alert.message,
                         style: TextStyle(color: Colors.grey.shade700)),
                   ],
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.schedule,
+                          size: 12, color: Colors.grey.shade500),
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatTriggeredAt(alert.triggeredAt),
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -200,4 +218,16 @@ class _AlertCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "Today 14:32", "Yesterday 09:10", or "5 May 2026 · 14:32" for older alerts.
+String _formatTriggeredAt(DateTime when) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final whenDay = DateTime(when.year, when.month, when.day);
+  final time = DateFormat('HH:mm').format(when);
+  final daysAgo = today.difference(whenDay).inDays;
+  if (daysAgo == 0) return 'Today $time';
+  if (daysAgo == 1) return 'Yesterday $time';
+  return '${DateFormat('d MMM yyyy').format(when)} · $time';
 }

@@ -32,6 +32,7 @@ class AppAlert {
     required this.severity,
     required this.title,
     required this.message,
+    required this.triggeredAt,
     this.id,
   });
 
@@ -40,6 +41,10 @@ class AppAlert {
   final AlertSeverity severity;
   final String title;
   final String message;
+
+  /// When the alert was raised (computed alerts: when the engine ran;
+  /// custom alerts: when the user created the row).
+  final DateTime triggeredAt;
 
   /// Non-null for user-created (stored) alerts.
   final String? id;

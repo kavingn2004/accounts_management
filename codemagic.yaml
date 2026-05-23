@@ -42,7 +42,20 @@ workflows:
         script: flutter pub get
       - name: Set up signing
         script: xcode-project use-profiles
-      - name: Build signed IPA
-        script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+      - name: Flutter build iOS bundle (no codesign)
+        script: flutter build ios --release --no-codesign
+      - name: Package signed IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner \
+            --config Release
     artifacts:
       - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Uncomment to push the build to a pre-created beta group on TestFlight:
+        # beta_groups:
+        #   - "My Beta Testers"

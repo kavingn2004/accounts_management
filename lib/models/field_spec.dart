@@ -46,6 +46,7 @@ class EntityConfig {
     this.decrementField,
     this.decrementLabel,
     this.interestRateField,
+    this.dueDateField,
     this.paymentInflow = false,
     this.exportable = false,
     this.dateFiltered = false,
@@ -79,6 +80,11 @@ class EntityConfig {
   /// If set (with [decrementField]), one period of interest at this annual-%
   /// column is accrued onto the balance before the payment is subtracted.
   final String? interestRateField;
+
+  /// If set, the "add payment" dialog shows a due-date picker (pre-filled from
+  /// this column) and writes the chosen date back to it, so the next due date
+  /// can be updated alongside a payment (e.g. creditors/debtors).
+  final String? dueDateField;
 
   /// For the "add payment" action: true = money comes IN to the chosen account
   /// (debtor repays you); false = money goes OUT (you pay a creditor/loan).

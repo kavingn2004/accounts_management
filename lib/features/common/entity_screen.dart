@@ -268,6 +268,13 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     final accountLabel =
         cfg.paymentInflow ? 'To account (optional)' : 'From account (optional)';
 
+    // Optional next-due-date picker (e.g. creditors/debtors). Pre-fill from the
+    // row's current due date so the user can roll it forward with the payment.
+    final dueField = cfg.dueDateField;
+    DateTime? due = dueField == null
+        ? null
+        : DateTime.tryParse((row[dueField] ?? '').toString());
+
     final payment = await showDialog<double>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -298,6 +305,25 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               ),
               _accountPicker(
                   accountLabel, account, (v) => setSt(() => account = v)),
+              if (dueField != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: InkWell(
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: ctx,
+                        initialDate: due ?? DateTime.now(),
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(2100),
+                      );
+                      if (picked != null) setSt(() => due = picked);
+                    },
+                    child: InputDecorator(
+                      decoration: const InputDecoration(labelText: 'Next due date'),
+                      child: Text(due == null ? 'Select date' : isoDate(due!)),
+                    ),
+                  ),
+                ),
             ],
           ),
           actions: [
@@ -318,8 +344,11 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     if (payment == null || payment == 0) return;
     var next = current + interest - payment;
     if (next < 0) next = 0;
-    await ref.read(repoProvider).update(cfg.table, row['id'].toString(),
-        {field: double.parse(next.toStringAsFixed(2))});
+    final updates = <String, dynamic>{
+      field: double.parse(next.toStringAsFixed(2)),
+    };
+    if (dueField != null && due != null) updates[dueField] = isoDate(due!);
+    await ref.read(repoProvider).update(cfg.table, row['id'].toString(), updates);
     if (account != null) {
       // Debtor repayment is money IN; creditor/loan/bill is money OUT.
       await _recordCashMove(account!, cfg.paymentInflow ? payment : -payment);
@@ -869,21 +898,35 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
         );
         break;
       case FieldType.date:
-        final d = _dates[f.key];
-        child = InkWell(
-          onTap: () async {
-            final picked = await showDatePicker(
-              context: context,
-              initialDate: d ?? DateTime.now(),
-              firstDate: DateTime(2000),
-              lastDate: DateTime(2100),
+        child = FormField<DateTime>(
+          initialValue: _dates[f.key],
+          validator: f.required
+              ? (v) => v == null ? 'Required' : null
+              : null,
+          builder: (state) {
+            final d = _dates[f.key];
+            return InkWell(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: d ?? DateTime.now(),
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                );
+                if (picked != null) {
+                  setState(() => _dates[f.key] = picked);
+                  state.didChange(picked);
+                }
+              },
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: f.label,
+                  errorText: state.errorText,
+                ),
+                child: Text(d == null ? 'Select date' : isoDate(d)),
+              ),
             );
-            if (picked != null) setState(() => _dates[f.key] = picked);
           },
-          child: InputDecorator(
-            decoration: InputDecoration(labelText: f.label),
-            child: Text(d == null ? 'Select date' : isoDate(d)),
-          ),
         );
         break;
     }

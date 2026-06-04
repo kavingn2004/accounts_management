@@ -119,6 +119,7 @@ class Modules {
     ],
     decrementField: 'amount',
     decrementLabel: 'Add payment',
+    dueDateField: 'due_date',
     paymentInflow: true, // debtor repaying you = money in
     titleOf: (r) => (r['person_name'] ?? '').toString(),
     subtitleOf: (r) =>
@@ -136,11 +137,12 @@ class Modules {
       FieldSpec('contact', 'Contact'),
       FieldSpec('amount', 'Amount you owe',
           type: FieldType.number, required: true),
-      FieldSpec('due_date', 'Due date', type: FieldType.date),
+      FieldSpec('due_date', 'Due date', type: FieldType.date, required: true),
       FieldSpec('note', 'Note'),
     ],
     decrementField: 'amount',
     decrementLabel: 'Add payment',
+    dueDateField: 'due_date',
     titleOf: (r) => (r['person_name'] ?? '').toString(),
     subtitleOf: (r) =>
         '${r['status'] ?? 'open'} · due ${prettyDate(r['due_date']?.toString())}',

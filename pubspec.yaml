@@ -11,6 +11,8 @@ dependencies:
     sdk: flutter
 
   # Backend
+  supabase_flutter: ^2.8.0
+
   # State management
   flutter_riverpod: ^2.5.1
 

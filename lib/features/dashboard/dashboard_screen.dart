@@ -100,6 +100,53 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             children: [
               _NetWorthBanner(value: money(d?['net_worth'] as num?)),
               const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Current worth',
+                      value: money(d?['current_worth'] as num?),
+                      icon: Icons.account_balance_wallet,
+                      color: AppTheme.cIncome,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Saving worth',
+                      value: money(d?['saving_worth'] as num?),
+                      icon: Icons.savings,
+                      color: AppTheme.cSavings,
+                      onTap: () => _openModule(context, Modules.savings),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Debt worth',
+                      value: money(d?['debt_worth'] as num?),
+                      icon: Icons.person_add_alt,
+                      color: AppTheme.cDebtor,
+                      onTap: () => _openModule(context, Modules.debtors),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Credit worth',
+                      value: money(d?['credit_worth'] as num?),
+                      icon: Icons.person_remove_alt_1,
+                      color: AppTheme.cCreditor,
+                      onTap: () => _openModule(context, Modules.creditors),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               if ((data?.accounts ?? []).isNotEmpty)
                 _BalancesCard(accounts: data!.accounts),
               const SizedBox(height: 4),

@@ -1,3 +1,4 @@
+import 'finance_math.dart';
 import 'finance_repository.dart';
 import 'local_store.dart';
 
@@ -43,78 +44,34 @@ class LocalRepository extends FinanceRepository {
     await _store.write(table, rows);
   }
 
-  /// Live balance per account name: opening balance + every cash movement that
-  /// references the account (income +, expense −, transfers, payment moves).
-  /// Single source of truth for both the accounts list and net worth.
-  Map<String, double> _balanceMap() {
-    final accounts = _store.read('accounts');
-    final balances = <String, double>{
-      for (final a in accounts)
-        (a['name'] ?? '').toString():
-            (a['opening_balance'] as num?)?.toDouble() ?? 0,
-    };
-
-    void add(String? name, double delta) {
-      if (name != null && balances.containsKey(name)) {
-        balances[name] = balances[name]! + delta;
-      }
-    }
-
-    double amt(Json r, [String k = 'amount']) =>
-        (r[k] as num?)?.toDouble() ?? 0;
-
-    for (final r in _store.read('income')) {
-      add(r['account']?.toString(), amt(r));
-    }
-    for (final r in _store.read('expenses')) {
-      add(r['account']?.toString(), -amt(r));
-    }
-    for (final t in _store.read('transfers')) {
-      add(t['from']?.toString(), -amt(t));
-      add(t['to']?.toString(), amt(t));
-    }
-    // Signed payment movements (negative = money out, positive = money in).
-    for (final m in _store.read('cash_moves')) {
-      add(m['account']?.toString(), amt(m));
-    }
-    return balances;
-  }
+  /// Single source of truth for account balances (see [FinanceMath.balanceMap]).
+  Map<String, double> _balanceMap() => FinanceMath.balanceMap(
+        accounts: _store.read('accounts'),
+        income: _store.read('income'),
+        expenses: _store.read('expenses'),
+        transfers: _store.read('transfers'),
+        cashMoves: _store.read('cash_moves'),
+      );
 
   @override
-  Future<List<Json>> accountsWithBalances() async {
-    final balances = _balanceMap();
-    return _store
-        .read('accounts')
-        .map((a) =>
-            {...a, 'balance': balances[(a['name'] ?? '').toString()] ?? 0})
-        .toList();
-  }
+  Future<List<Json>> accountsWithBalances() async =>
+      FinanceMath.accountsWithBalances(
+        accounts: _store.read('accounts'),
+        balances: _balanceMap(),
+      );
 
   @override
-  Future<Json?> dashboard() async {
-    double sum(String table, String key) => _store
-        .read(table)
-        .fold(0.0, (a, r) => a + ((r[key] as num?)?.toDouble() ?? 0));
-
-    // Cash/bank component = sum of account balances (includes opening balances
-    // plus every income/expense/transfer tied to an account).
-    final accountsTotal = _balanceMap().values.fold(0.0, (a, b) => a + b);
-    final investments = sum('investments', 'current_value');
-    final savings = sum('savings_goals', 'saved_amount');
-    final receivable = sum('debtors', 'amount');
-    final payable = sum('creditors', 'amount');
-    final loans = _store
-        .read('loans')
-        .where((r) => r['status'] == 'active')
-        .fold(0.0, (a, r) => a + ((r['outstanding'] as num?)?.toDouble() ?? 0));
-
-    return {
-      'net_worth':
-          accountsTotal + investments + savings + receivable - payable - loans,
-      'month_income': sum('income', 'amount'),
-      'month_expense': sum('expenses', 'amount'),
-    };
-  }
+  Future<Json?> dashboard() async => FinanceMath.dashboard(
+        balances: _balanceMap(),
+        income: _store.read('income'),
+        expenses: _store.read('expenses'),
+        investments: _store.read('investments'),
+        savingsGoals: _store.read('savings_goals'),
+        debtors: _store.read('debtors'),
+        creditors: _store.read('creditors'),
+        loans: _store.read('loans'),
+        bills: _store.read('bills'),
+      );
 
   /// Populate sample data the first time the app runs.
   Future<void> seedIfNeeded() async {

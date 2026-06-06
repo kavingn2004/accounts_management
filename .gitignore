@@ -15,6 +15,9 @@ build/
 *.env
 run_local.ps1
 
+# Large downloaded tool binary (not source)
+tool/cloudflared.exe
+
 # OS
 .DS_Store
 Thumbs.db

@@ -2,10 +2,11 @@ import 'package:intl/intl.dart';
 
 import '../../data/finance_repository.dart';
 
-enum Period { week, month, year }
+enum Period { today, week, month, year }
 
 extension PeriodLabel on Period {
   String get label => switch (this) {
+        Period.today => 'Today',
         Period.week => 'Week',
         Period.month => 'Month',
         Period.year => 'Year',
@@ -34,6 +35,7 @@ double _amount(Json r) => (r['amount'] as num?)?.toDouble() ?? 0;
 
 /// Inclusive start of the selected period (relative to now).
 DateTime _periodStart(Period p, DateTime now) => switch (p) {
+      Period.today => DateTime(now.year, now.month, now.day),
       Period.week => DateTime(now.year, now.month, now.day)
           .subtract(const Duration(days: 6)),
       Period.month => DateTime(now.year, now.month, 1),
@@ -52,6 +54,10 @@ List<Bucket> buildBuckets(Period p, List<Json> income, List<Json> expenses) {
   int Function(DateTime) indexOf;
 
   switch (p) {
+    case Period.today:
+      buckets = [Bucket('Today')];
+      indexOf = (_) => 0;
+      break;
     case Period.week:
       buckets = List.generate(7, (i) {
         final day = now.subtract(Duration(days: 6 - i));

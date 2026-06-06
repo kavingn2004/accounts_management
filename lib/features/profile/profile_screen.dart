@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config.dart';
+import '../../core/supabase_config.dart';
 import '../../core/theme.dart';
 import '../../services/providers.dart';
 
@@ -53,6 +55,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!ok) return;
     await ref.read(pinServiceProvider).clearPin();
     ref.invalidate(hasPinProvider);
+    if (mounted) {
+      ref.read(unlockedProvider.notifier).state = false;
+      Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+  }
+
+  Future<void> _signOut() async {
+    final ok = await _confirm('Sign out?',
+        'You will need to sign in again to access your data.');
+    if (!ok) return;
+    await Supabase.instance.client.auth.signOut();
     if (mounted) {
       ref.read(unlockedProvider.notifier).state = false;
       Navigator.of(context).popUntil((r) => r.isFirst);
@@ -117,8 +130,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 Text(_name,
                     style: const TextStyle(
                         fontSize: 20, fontWeight: FontWeight.bold)),
-                Text('Stored on this device',
-                    style: TextStyle(color: Colors.grey.shade600)),
+                Text(
+                  SupabaseConfig.enabled
+                      ? (Supabase.instance.client.auth.currentUser?.email ??
+                          'Synced to your account')
+                      : 'Stored on this device',
+                  style: TextStyle(color: Colors.grey.shade600),
+                ),
               ],
             ),
           ),
@@ -221,12 +239,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          TextButton.icon(
-            onPressed: _clearData,
-            icon: const Icon(Icons.delete_forever, color: AppTheme.cExpense),
-            label: const Text('Clear all data',
-                style: TextStyle(color: AppTheme.cExpense)),
-          ),
+          if (SupabaseConfig.enabled)
+            OutlinedButton.icon(
+              onPressed: _signOut,
+              icon: const Icon(Icons.logout, color: AppTheme.cExpense),
+              label: const Text('Sign out',
+                  style: TextStyle(color: AppTheme.cExpense)),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+                foregroundColor: AppTheme.cExpense,
+              ),
+            )
+          else
+            TextButton.icon(
+              onPressed: _clearData,
+              icon: const Icon(Icons.delete_forever, color: AppTheme.cExpense),
+              label: const Text('Clear all data',
+                  style: TextStyle(color: AppTheme.cExpense)),
+            ),
         ],
       ),
     );

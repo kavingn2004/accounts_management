@@ -48,6 +48,11 @@ class EntityConfig {
     this.interestRateField,
     this.dueDateField,
     this.paymentInflow = false,
+    this.principalAccount = false,
+    this.statusField,
+    this.originalAmountField,
+    this.settledAccountField,
+    this.paymentsTable,
     this.exportable = false,
     this.dateFiltered = false,
   });
@@ -89,6 +94,32 @@ class EntityConfig {
   /// For the "add payment" action: true = money comes IN to the chosen account
   /// (debtor repays you); false = money goes OUT (you pay a creditor/loan).
   final bool paymentInflow;
+
+  /// If true, the create form shows an optional account picker and records the
+  /// initial [amount] as a cash movement against that account: money OUT for
+  /// what you lent (debtors), money IN for what you borrowed (creditors).
+  /// Direction is the opposite of [paymentInflow]. Applied on creation only —
+  /// edits don't re-post a movement, so balances aren't double-counted.
+  final bool principalAccount;
+
+  /// Status column (`open` / `partial` / `settled`) for settle-able modules
+  /// (debtors/creditors). When set, payments move the status automatically and
+  /// the row menu gains "Mark as settled" / "Reopen" actions.
+  final String? statusField;
+
+  /// Column holding the full original amount owed, captured at creation so the
+  /// row can show "paid X of Y" as the balance is paid down part by part.
+  final String? originalAmountField;
+
+  /// Column recording the account that closed the debt — where the money was
+  /// received (debtor) or paid from (creditor). Set from the final settling
+  /// payment, or chosen when manually marking the row settled.
+  final String? settledAccountField;
+
+  /// If set, each payment is logged as a row here (a per-person installment
+  /// ledger), viewable via the "Payments" action. Rows are tagged with
+  /// `parent_id` (= the source row id) and `parent_type` (= the source table).
+  final String? paymentsTable;
 
   /// If true, the EntityScreen shows an export menu (CSV / PDF) in the AppBar.
   final bool exportable;

@@ -75,11 +75,16 @@ class FinanceMath {
     double sum(List<Json> rows, String key) =>
         rows.fold(0.0, (a, r) => a + ((r[key] as num?)?.toDouble() ?? 0));
 
+    // Settled debts are closed out — exclude them from what's owed.
+    double sumOwed(List<Json> rows) => rows
+        .where((r) => r['status'] != 'settled')
+        .fold(0.0, (a, r) => a + ((r['amount'] as num?)?.toDouble() ?? 0));
+
     final accountsTotal = balances.values.fold(0.0, (a, b) => a + b);
     final investmentsTotal = sum(investments, 'current_value');
     final savings = sum(savingsGoals, 'saved_amount');
-    final receivable = sum(debtors, 'amount');
-    final payable = sum(creditors, 'amount');
+    final receivable = sumOwed(debtors);
+    final payable = sumOwed(creditors);
     final billsTotal = sum(bills, 'amount');
     final loansTotal = loans
         .where((r) => r['status'] == 'active')

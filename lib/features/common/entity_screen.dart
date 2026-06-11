@@ -342,18 +342,201 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       ),
     );
     if (payment == null || payment == 0) return;
-    var next = current + interest - payment;
+    // Can't pay more than is owed (balance + this period's interest).
+    final payable = current + interest;
+    final pay = payment > payable ? payable : payment;
+    var next = payable - pay;
     if (next < 0) next = 0;
     final updates = <String, dynamic>{
       field: double.parse(next.toStringAsFixed(2)),
     };
+    // Move the settlement status as the balance is paid down part by part.
+    if (cfg.statusField != null) {
+      final original =
+          (row[cfg.originalAmountField] as num?)?.toDouble() ?? current;
+      final settled = next <= 0;
+      updates[cfg.statusField!] =
+          settled ? 'settled' : (next < original ? 'partial' : 'open');
+      // Note where the closing payment landed (received in / paid from).
+      if (settled && cfg.settledAccountField != null && account != null) {
+        updates[cfg.settledAccountField!] = account;
+      }
+    }
     if (dueField != null && due != null) updates[dueField] = isoDate(due!);
     await ref.read(repoProvider).update(cfg.table, row['id'].toString(), updates);
     if (account != null) {
       // Debtor repayment is money IN; creditor/loan/bill is money OUT.
-      await _recordCashMove(account!, cfg.paymentInflow ? payment : -payment);
+      await _recordCashMove(account!, cfg.paymentInflow ? pay : -pay);
+    }
+    // Log this installment to the per-person payment ledger. Best-effort: a
+    // missing ledger table (e.g. migration not yet run) must not fail the
+    // payment itself, which is already recorded above.
+    if (cfg.paymentsTable != null) {
+      try {
+        await ref.read(repoProvider).insert(cfg.paymentsTable!, {
+          'parent_id': row['id'].toString(),
+          'parent_type': cfg.table,
+          'amount': pay,
+          'account': account,
+          'date': isoDate(DateTime.now()),
+        });
+      } catch (_) {
+        // Ledger is non-critical; ignore and keep the payment.
+      }
     }
     _refresh();
+  }
+
+  /// Close a debt. If an account is chosen, the remaining balance is treated as
+  /// actually received (debtor) / paid (creditor) through it: the account
+  /// balance moves and the row is zeroed. With no account it's a pure write-off
+  /// — marked settled but the remaining amount is kept for history.
+  Future<void> _markSettled(Json row) async {
+    final field = cfg.decrementField;
+    final remaining = (row[field] as num?)?.toDouble() ?? 0;
+    String? account;
+    final label = cfg.paymentInflow
+        ? 'Received in account (optional)'
+        : 'Paid from account (optional)';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Mark as settled'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Close "${cfg.titleOf(row)}"?'),
+              if (remaining > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Pick an account to record the remaining ${money(remaining)} '
+                  'as ${cfg.paymentInflow ? 'received' : 'paid'}. Leave blank '
+                  'to just close it without moving money.',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+              ],
+              _accountPicker(label, account, (v) => setSt(() => account = v)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: cfg.color),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Settle'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+
+    final repo = ref.read(repoProvider);
+    final updates = <String, dynamic>{cfg.statusField!: 'settled'};
+    if (account != null) {
+      // Money actually changed hands — zero the balance and note the account.
+      if (field != null) updates[field] = 0;
+      if (cfg.settledAccountField != null) {
+        updates[cfg.settledAccountField!] = account;
+      }
+    }
+    await repo.update(cfg.table, row['id'].toString(), updates);
+
+    if (account != null && remaining != 0) {
+      // Debtor = money IN to the account; creditor = money OUT.
+      await _recordCashMove(account!, cfg.paymentInflow ? remaining : -remaining);
+      if (cfg.paymentsTable != null) {
+        try {
+          await repo.insert(cfg.paymentsTable!, {
+            'parent_id': row['id'].toString(),
+            'parent_type': cfg.table,
+            'amount': remaining,
+            'account': account,
+            'date': isoDate(DateTime.now()),
+          });
+        } catch (_) {
+          // Ledger is non-critical.
+        }
+      }
+    }
+    _refresh();
+  }
+
+  /// Reopen a settled debt, recomputing status from the remaining balance.
+  Future<void> _reopen(Json row) async {
+    final remaining = (row[cfg.decrementField] as num?)?.toDouble() ?? 0;
+    final original =
+        (row[cfg.originalAmountField] as num?)?.toDouble() ?? remaining;
+    final status = remaining > 0 && remaining < original ? 'partial' : 'open';
+    final updates = <String, dynamic>{cfg.statusField!: status};
+    // Clear the stale settling account so it can't resurface if re-settled.
+    if (cfg.settledAccountField != null) {
+      updates[cfg.settledAccountField!] = null;
+    }
+    await ref.read(repoProvider).update(cfg.table, row['id'].toString(), updates);
+    _refresh();
+  }
+
+  /// Bottom sheet listing every installment paid against this row.
+  Future<void> _showPayments(Json row) async {
+    List<Json> mine;
+    try {
+      final all = await ref.read(repoProvider).list(cfg.paymentsTable!);
+      final id = row['id'].toString();
+      mine = all.where((p) => p['parent_id']?.toString() == id).toList();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Payment history unavailable. Run the debt_payments migration '
+              'in Supabase. ($e)'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Payments — ${cfg.titleOf(row)}',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              if (mine.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: Text('No payments yet')),
+                )
+              else
+                ...mine.map((p) {
+                  final acct = (p['account'] ?? '').toString();
+                  return ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.payments_outlined, color: cfg.color),
+                    title: Text(money(p['amount'] as num?)),
+                    subtitle: Text([
+                      prettyDate(p['date']?.toString()),
+                      if (acct.isNotEmpty) acct,
+                    ].where((s) => s.isNotEmpty).join(' · ')),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _export(_ExportFormat fmt) async {
@@ -516,6 +699,12 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         _addAmount(r);
                       } else if (v == 'pay') {
                         _payAmount(r);
+                      } else if (v == 'payments') {
+                        _showPayments(r);
+                      } else if (v == 'settle') {
+                        _markSettled(r);
+                      } else if (v == 'reopen') {
+                        _reopen(r);
                       } else if (v == 'edit') {
                         _openSheet(existing: r);
                       } else if (v == 'delete') {
@@ -534,7 +723,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
-                      if (cfg.decrementField != null)
+                      if (cfg.decrementField != null &&
+                          (r['status'] ?? '') != 'settled')
                         PopupMenuItem(
                           value: 'pay',
                           child: ListTile(
@@ -542,6 +732,36 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                                 color: cfg.color),
                             title:
                                 Text(cfg.decrementLabel ?? 'Add payment'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      if (cfg.paymentsTable != null)
+                        PopupMenuItem(
+                          value: 'payments',
+                          child: ListTile(
+                            leading: Icon(Icons.history, color: cfg.color),
+                            title: const Text('Payments'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      if (cfg.statusField != null &&
+                          (r['status'] ?? '') != 'settled')
+                        const PopupMenuItem(
+                          value: 'settle',
+                          child: ListTile(
+                            leading: Icon(Icons.check_circle_outline,
+                                color: Colors.green),
+                            title: Text('Mark as settled'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      if (cfg.statusField != null &&
+                          (r['status'] ?? '') == 'settled')
+                        const PopupMenuItem(
+                          value: 'reopen',
+                          child: ListTile(
+                            leading: Icon(Icons.lock_open_outlined),
+                            title: Text('Reopen'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
@@ -709,8 +929,18 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
   bool _busy = false;
   String? _error;
 
+  // For modules with cfg.principalAccount: the account the initial amount was
+  // transferred from/to (creation only). Null = don't touch any balance.
+  List<String> _accountNames = [];
+  String? _principalAccount;
+
   EntityConfig get cfg => widget.config;
   bool get _isEdit => widget.existing != null;
+
+  /// Whether the create form should offer a "which account?" picker that posts
+  /// the principal as a cash movement. Edits never re-post, to avoid double
+  /// counting an already-recorded transfer.
+  bool get _showPrincipalAccount => cfg.principalAccount && !_isEdit;
 
   @override
   void initState() {
@@ -758,7 +988,20 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             .toList();
       }
     }
+    if (_showPrincipalAccount) {
+      final accounts =
+          _dynamicOptions['accounts'] ?? await _accountNamesFromRepo(repo);
+      _accountNames = accounts;
+    }
     if (mounted) setState(() {});
+  }
+
+  Future<List<String>> _accountNamesFromRepo(FinanceRepository repo) async {
+    final rows = await repo.list('accounts');
+    return rows
+        .map((r) => (r['name'] ?? '').toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
   }
 
   @override
@@ -802,7 +1045,28 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
       if (_isEdit) {
         await repo.update(cfg.table, widget.existing!['id'].toString(), values);
       } else {
+        // Settle-able rows: snapshot the full amount owed (so progress can be
+        // shown as it's paid down) and start in the 'open' state.
+        if (cfg.originalAmountField != null) {
+          values[cfg.originalAmountField!] = values['amount'];
+        }
+        if (cfg.statusField != null) {
+          values[cfg.statusField!] = 'open';
+        }
         await repo.insert(cfg.table, values);
+        // Record the initial transfer against the chosen account, if any.
+        // Debtor (paymentInflow) = money OUT (you lent); creditor = money IN.
+        if (_showPrincipalAccount && _principalAccount != null) {
+          final principal = (values['amount'] as num?)?.toDouble() ?? 0;
+          if (principal != 0) {
+            await repo.insert('cash_moves', {
+              'account': _principalAccount,
+              'amount': cfg.paymentInflow ? -principal : principal,
+              'date': isoDate(DateTime.now()),
+              'note': cfg.title,
+            });
+          }
+        }
       }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -827,6 +1091,8 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             ...cfg.fields.map(_buildField),
+            if (_showPrincipalAccount && _accountNames.isNotEmpty)
+              _buildPrincipalAccountPicker(),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!,
@@ -845,6 +1111,28 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Required account picker shown on the debtor/creditor create form. The
+  /// chosen account's balance moves: money out of it (debtor — you lent) or
+  /// into it (creditor — you borrowed). Shown only when accounts exist.
+  Widget _buildPrincipalAccountPicker() {
+    final label = cfg.paymentInflow
+        ? 'Paid from account' // debtor: you lent this money
+        : 'Received in account'; // creditor: you borrowed this money
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DropdownButtonFormField<String>(
+        initialValue: _principalAccount,
+        decoration: InputDecoration(labelText: label),
+        items: _accountNames
+            .map((a) => DropdownMenuItem(value: a, child: Text(a)))
+            .toList(),
+        onChanged: (v) => setState(() => _principalAccount = v),
+        validator: (v) =>
+            (v == null || v.isEmpty) ? 'Select an account' : null,
       ),
     );
   }

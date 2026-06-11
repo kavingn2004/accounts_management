@@ -2,7 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../core/formatters.dart';
 import '../core/theme.dart';
+import '../data/finance_repository.dart';
 import '../models/field_spec.dart';
+
+/// Subtitle for a settle-able debt row. While open/partial it shows how much
+/// has been paid down of the original (part-by-part progress) + the due date.
+/// Once settled it shows the account the money was received in (debtor) or paid
+/// from (creditor), per [received].
+String Function(Json) _settlementSubtitle({required bool received}) => (r) {
+      final status = (r['status'] ?? 'open').toString();
+      if (status == 'settled') {
+        final acct = (r['settled_account'] ?? '').toString();
+        final where = acct.isEmpty
+            ? ''
+            : (received ? 'received in $acct' : 'paid from $acct');
+        return ['settled', if (where.isNotEmpty) where].join(' · ');
+      }
+      final original = (r['original_amount'] as num?)?.toDouble() ??
+          (r['amount'] as num?)?.toDouble() ??
+          0;
+      final remaining = (r['amount'] as num?)?.toDouble() ?? 0;
+      final due = prettyDate(r['due_date']?.toString());
+      final paid = 'paid ${money(original - remaining)} of ${money(original)}';
+      return [status, paid, if (due.isNotEmpty) 'due $due'].join(' · ');
+    };
 
 /// Central registry of every feature module. The dashboard grid and the
 /// generic EntityScreen are both driven by these configs — to add a module,
@@ -121,9 +144,13 @@ class Modules {
     decrementLabel: 'Add payment',
     dueDateField: 'due_date',
     paymentInflow: true, // debtor repaying you = money in
+    principalAccount: true, // lending them = money out of your account
+    statusField: 'status',
+    originalAmountField: 'original_amount',
+    settledAccountField: 'settled_account',
+    paymentsTable: 'debt_payments',
     titleOf: (r) => (r['person_name'] ?? '').toString(),
-    subtitleOf: (r) =>
-        '${r['status'] ?? 'open'} · due ${prettyDate(r['due_date']?.toString())}',
+    subtitleOf: _settlementSubtitle(received: true),
     trailingOf: (r) => money(r['amount'] as num?),
   );
 
@@ -143,9 +170,13 @@ class Modules {
     decrementField: 'amount',
     decrementLabel: 'Add payment',
     dueDateField: 'due_date',
+    principalAccount: true, // borrowing from them = money into your account
+    statusField: 'status',
+    originalAmountField: 'original_amount',
+    settledAccountField: 'settled_account',
+    paymentsTable: 'debt_payments',
     titleOf: (r) => (r['person_name'] ?? '').toString(),
-    subtitleOf: (r) =>
-        '${r['status'] ?? 'open'} · due ${prettyDate(r['due_date']?.toString())}',
+    subtitleOf: _settlementSubtitle(received: false),
     trailingOf: (r) => money(r['amount'] as num?),
   );
 

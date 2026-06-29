@@ -65,7 +65,7 @@ void main() {
   testWidgets('boot → set PIN → dashboard with seeded data', (tester) async {
     await pumpApp(tester);
     await setPin(tester);
-    expect(find.text('My Accounts'), findsOneWidget);
+    expect(find.text('Accounflow'), findsOneWidget);
     expect(find.text('Net worth'), findsOneWidget);
   });
 
@@ -76,6 +76,11 @@ void main() {
     tester.firstState<ScaffoldState>(find.byType(Scaffold)).openDrawer();
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ListTile, 'Income'));
+    await tester.pumpAndSettle();
+
+    // Show all dates so the seeded 'Salary' (dated weeks ago) is visible
+    // regardless of today's date and the default current-month filter.
+    await tester.tap(find.text('All'));
     await tester.pumpAndSettle();
 
     expect(find.text('Salary'), findsOneWidget);

@@ -244,10 +244,71 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     if (also != null) {
       values[also] = ((row[also] as num?)?.toDouble() ?? 0) + amount;
     }
+    final cum = cfg.cumulativeIncrementField;
+    if (cum != null) {
+      values[cum] = ((row[cum] as num?)?.toDouble() ?? 0) + amount;
+    }
     await ref
         .read(repoProvider)
         .update(cfg.table, row['id'].toString(), values);
     if (account != null) await _recordCashMove(account!, -amount);
+    _refresh();
+  }
+
+  /// Overwrite a numeric column with a typed value (e.g. update an
+  /// investment's current market value). Replaces rather than adds; no
+  /// account movement is recorded.
+  Future<void> _setValue(Json row) async {
+    final field = cfg.setField!;
+    final current = (row[field] as num?)?.toDouble() ?? 0;
+    // Prefill with the current value, dropping a redundant trailing ".0".
+    final prefill = current == 0
+        ? ''
+        : (current == current.roundToDouble()
+            ? current.toInt().toString()
+            : current.toString());
+    final controller = TextEditingController(text: prefill);
+
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(cfg.setLabel ?? 'Update value'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Current: ${money(current)}',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+              ],
+              decoration: const InputDecoration(labelText: 'New value'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: cfg.color),
+            onPressed: () =>
+                Navigator.pop(ctx, double.tryParse(controller.text.trim())),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    await ref.read(repoProvider).update(
+        cfg.table, row['id'].toString(), {field: value});
     _refresh();
   }
 
@@ -697,6 +758,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                     onSelected: (v) async {
                       if (v == 'add_amount') {
                         _addAmount(r);
+                      } else if (v == 'set_value') {
+                        _setValue(r);
                       } else if (v == 'pay') {
                         _payAmount(r);
                       } else if (v == 'payments') {
@@ -720,6 +783,16 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                                 color: cfg.color),
                             title:
                                 Text(cfg.incrementLabel ?? 'Add amount'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      if (cfg.setField != null)
+                        PopupMenuItem(
+                          value: 'set_value',
+                          child: ListTile(
+                            leading:
+                                Icon(Icons.edit_note, color: cfg.color),
+                            title: Text(cfg.setLabel ?? 'Update value'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
@@ -934,6 +1007,10 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
   List<String> _accountNames = [];
   String? _principalAccount;
 
+  // For modules with cfg.principalAccountField: the account the entered amount
+  // was paid from (creation only, optional). Null = don't touch any balance.
+  String? _paidFromAccount;
+
   EntityConfig get cfg => widget.config;
   bool get _isEdit => widget.existing != null;
 
@@ -941,6 +1018,12 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
   /// the principal as a cash movement. Edits never re-post, to avoid double
   /// counting an already-recorded transfer.
   bool get _showPrincipalAccount => cfg.principalAccount && !_isEdit;
+
+  /// Whether the create form should offer the optional "paid from account"
+  /// picker that deducts [EntityConfig.principalAccountField] from the chosen
+  /// account. Edits never re-post, to avoid double counting.
+  bool get _showPaidFromAccount =>
+      cfg.principalAccountField != null && !_isEdit;
 
   @override
   void initState() {
@@ -988,7 +1071,7 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             .toList();
       }
     }
-    if (_showPrincipalAccount) {
+    if (_showPrincipalAccount || _showPaidFromAccount) {
       final accounts =
           _dynamicOptions['accounts'] ?? await _accountNamesFromRepo(repo);
       _accountNames = accounts;
@@ -1053,6 +1136,12 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
         if (cfg.statusField != null) {
           values[cfg.statusField!] = 'open';
         }
+        // Seed the running-total column from the first contribution.
+        final cum = cfg.cumulativeIncrementField;
+        final inc = cfg.incrementField;
+        if (cum != null && inc != null) {
+          values[cum] = values[inc];
+        }
         await repo.insert(cfg.table, values);
         // Record the initial transfer against the chosen account, if any.
         // Debtor (paymentInflow) = money OUT (you lent); creditor = money IN.
@@ -1062,6 +1151,20 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             await repo.insert('cash_moves', {
               'account': _principalAccount,
               'amount': cfg.paymentInflow ? -principal : principal,
+              'date': isoDate(DateTime.now()),
+              'note': cfg.title,
+            });
+          }
+        }
+        // Optional "paid from account": deduct the configured field's value as
+        // money OUT of the chosen account (e.g. cash spent buying an asset).
+        if (_showPaidFromAccount && _paidFromAccount != null) {
+          final spent =
+              (values[cfg.principalAccountField!] as num?)?.toDouble() ?? 0;
+          if (spent != 0) {
+            await repo.insert('cash_moves', {
+              'account': _paidFromAccount,
+              'amount': -spent,
               'date': isoDate(DateTime.now()),
               'note': cfg.title,
             });
@@ -1093,6 +1196,8 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             ...cfg.fields.map(_buildField),
             if (_showPrincipalAccount && _accountNames.isNotEmpty)
               _buildPrincipalAccountPicker(),
+            if (_showPaidFromAccount && _accountNames.isNotEmpty)
+              _buildPaidFromAccountPicker(),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!,
@@ -1133,6 +1238,26 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
         onChanged: (v) => setState(() => _principalAccount = v),
         validator: (v) =>
             (v == null || v.isEmpty) ? 'Select an account' : null,
+      ),
+    );
+  }
+
+  /// Optional account picker shown on a create form for modules with
+  /// [EntityConfig.principalAccountField]. Choosing an account deducts the
+  /// entered field value from its balance; leaving it blank touches nothing.
+  Widget _buildPaidFromAccountPicker() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DropdownButtonFormField<String>(
+        initialValue: _paidFromAccount,
+        decoration:
+            const InputDecoration(labelText: 'Paid from account (optional)'),
+        items: [
+          const DropdownMenuItem(value: null, child: Text('— None —')),
+          ..._accountNames
+              .map((a) => DropdownMenuItem(value: a, child: Text(a))),
+        ],
+        onChanged: (v) => setState(() => _paidFromAccount = v),
       ),
     );
   }

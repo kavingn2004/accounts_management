@@ -10,6 +10,11 @@ void main() {
   testWidgets('dashboard shows the Balances card with seeded accounts',
       (tester) async {
     await E2E.launch(tester);
+    // The Balances card sits below the worth cards (incl. investment); scroll
+    // it into view before asserting.
+    await tester.scrollUntilVisible(
+        find.text('Balances'), 150, scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
     expect(find.text('Balances'), findsOneWidget);
     expect(find.text('Cash'), findsWidgets);
     expect(find.text('HDFC Bank'), findsWidgets);

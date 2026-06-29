@@ -113,17 +113,24 @@ class Modules {
       FieldSpec('name', 'Name', required: true),
       FieldSpec('type', 'Type',
           type: FieldType.select,
-          options: ['stock', 'fund', 'fd', 'crypto', 'gold', 'other']),
+          options: ['stock', 'fund', 'fd', 'mf', 'sip', 'crypto', 'gold',
+            'other']),
       FieldSpec('invested_amount', 'Invested',
           type: FieldType.number, required: true),
       FieldSpec('current_value', 'Current value', type: FieldType.number),
     ],
     incrementField: 'invested_amount',
     incrementAlsoField: 'current_value',
+    // Total amount invested = running sum of every contribution (seeded from
+    // the first investment, grown by each "Add investment").
+    cumulativeIncrementField: 'total_invested',
     incrementLabel: 'Add investment',
+    setField: 'current_value',
+    setLabel: 'Update current value',
+    principalAccountField: 'invested_amount',
     titleOf: (r) => (r['name'] ?? '').toString(),
-    subtitleOf: (r) =>
-        '${r['type'] ?? ''} · invested ${money(r['invested_amount'] as num?)}',
+    subtitleOf: (r) => '${r['type'] ?? ''} · total invested '
+        '${money((r['total_invested'] ?? r['invested_amount']) as num?)}',
     trailingOf: (r) => money(r['current_value'] as num?),
   );
 

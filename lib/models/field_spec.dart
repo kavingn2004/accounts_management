@@ -43,12 +43,16 @@ class EntityConfig {
     this.incrementField,
     this.incrementAlsoField,
     this.incrementLabel,
+    this.cumulativeIncrementField,
+    this.setField,
+    this.setLabel,
     this.decrementField,
     this.decrementLabel,
     this.interestRateField,
     this.dueDateField,
     this.paymentInflow = false,
     this.principalAccount = false,
+    this.principalAccountField,
     this.statusField,
     this.originalAmountField,
     this.settledAccountField,
@@ -77,6 +81,17 @@ class EntityConfig {
   final String? incrementAlsoField;
   final String? incrementLabel;
 
+  /// A column that tracks the running total of [incrementField]: seeded equal
+  /// to it when the row is created and grown by every "add amount" action.
+  /// Maintained automatically (not a typed form field), so it can't drift.
+  final String? cumulativeIncrementField;
+
+  /// If set, rows get an action that OVERWRITES this numeric column with a
+  /// user-entered value (e.g. updating an investment's current market value).
+  /// Unlike [incrementField] this replaces rather than adds.
+  final String? setField;
+  final String? setLabel;
+
   /// If set, rows get a "payment" action that REDUCES this numeric column by a
   /// user-entered amount (e.g. paying down a creditor or loan balance).
   final String? decrementField;
@@ -101,6 +116,14 @@ class EntityConfig {
   /// Direction is the opposite of [paymentInflow]. Applied on creation only —
   /// edits don't re-post a movement, so balances aren't double-counted.
   final bool principalAccount;
+
+  /// If set, the create form shows an OPTIONAL "paid from account" picker. When
+  /// an account is chosen, the value entered in this numeric field is recorded
+  /// as money OUT of that account (e.g. cash spent to buy an investment).
+  /// Applied on creation only — edits don't re-post, so balances aren't
+  /// double-counted. Unlike [principalAccount] this is optional and reads the
+  /// configured field instead of a hardcoded `amount`.
+  final String? principalAccountField;
 
   /// Status column (`open` / `partial` / `settled`) for settle-able modules
   /// (debtors/creditors). When set, payments move the status automatically and

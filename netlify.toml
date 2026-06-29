@@ -1,0 +1,39 @@
+# Netlify build & deploy config for the Flutter web app.
+#
+# Netlify's build image does not ship with Flutter, so the build command fetches
+# a pinned Flutter SDK and then compiles the web release. Supabase credentials
+# are injected at build time from Netlify environment variables
+# (Site settings -> Environment variables):
+#
+#   SUPABASE_URL       = https://<project>.supabase.co
+#   SUPABASE_ANON_KEY  = <anon public key>
+#
+# When those are absent the app falls back to on-device storage (no login),
+# so a deploy without them still works for a demo.
+
+[build]
+  publish = "build/web"
+  command = '''
+    set -e
+    if [ ! -d "$HOME/flutter/bin" ]; then
+      git clone https://github.com/flutter/flutter.git --branch "$FLUTTER_VERSION" --depth 1 "$HOME/flutter"
+    fi
+    export PATH="$HOME/flutter/bin:$PATH"
+    flutter --version
+    flutter config --enable-web
+    flutter pub get
+    flutter build web --release \
+      --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+      --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+  '''
+
+[build.environment]
+  # Pin to the same stable Flutter the project is developed against.
+  FLUTTER_VERSION = "3.44.0"
+
+# SPA fallback: every path serves the Flutter app shell. This is also provided
+# by web/_redirects (copied into build/web); declared here too for visibility.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

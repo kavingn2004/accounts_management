@@ -147,6 +147,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ],
               ),
               const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Investment worth',
+                      value: money(d?['investment_worth'] as num?),
+                      icon: Icons.trending_up,
+                      color: AppTheme.cInvest,
+                      onTap: () => _openModule(context, Modules.investment),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Invested',
+                      value: money(d?['invested_total'] as num?),
+                      icon: Icons.account_balance_wallet,
+                      color: AppTheme.cInvest,
+                      onTap: () => _openModule(context, Modules.investment),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               if ((data?.accounts ?? []).isNotEmpty)
                 _BalancesCard(accounts: data!.accounts),
               const SizedBox(height: 4),

@@ -69,7 +69,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Form(
@@ -78,24 +78,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.account_balance_wallet,
-                      size: 56, color: AppTheme.primary),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Accounflow',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: context.colors.surface,
+                        border: Border.all(color: context.colors.border),
+                        borderRadius: BorderRadius.circular(AppTheme.rCard),
+                      ),
+                      child: Icon(Icons.account_balance_wallet_outlined,
+                          size: 22, color: context.colors.accent),
+                    ),
                   ),
+                  const SizedBox(height: 12),
+                  Text('Accounflow', style: context.text.headlineMedium),
                   const SizedBox(height: 4),
                   Text(
-                    _isSignUp ? 'Create your account' : 'Sign in to continue',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey.shade600),
+                    _isSignUp ? 'Create your account.' : 'Sign in to your books.',
+                    style: context.text.bodyMedium
+                        ?.copyWith(color: context.colors.textSecondary),
                   ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 32),
                   TextFormField(
                     controller: _email,
                     keyboardType: TextInputType.emailAddress,
@@ -134,39 +140,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Text(_error!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
+                        style: context.text.labelMedium
+                            ?.copyWith(color: context.colors.negative)),
                   ],
                   if (_info != null) ...[
                     const SizedBox(height: 12),
                     Text(_info!,
-                        style: const TextStyle(color: AppTheme.cIncome)),
+                        style: context.text.labelMedium
+                            ?.copyWith(color: context.colors.positive)),
                   ],
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 32),
                   FilledButton(
                     onPressed: _busy ? null : _submit,
-                    style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48)),
                     child: _busy
-                        ? const SizedBox(
+                        ? SizedBox(
                             height: 20,
                             width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: context.colors.onButtonFill,
+                            ),
                           )
                         : Text(_isSignUp ? 'Create account' : 'Sign in'),
                   ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: _busy
-                        ? null
-                        : () => setState(() {
-                              _isSignUp = !_isSignUp;
-                              _error = null;
-                              _info = null;
-                            }),
-                    child: Text(_isSignUp
-                        ? 'Already have an account? Sign in'
-                        : "Don't have an account? Sign up"),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.center,
+                    child: TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() {
+                                _isSignUp = !_isSignUp;
+                                _error = null;
+                                _info = null;
+                              }),
+                      child: Text(_isSignUp
+                          ? 'Already have an account? Sign in'
+                          : "Don't have an account? Create account"),
+                    ),
                   ),
                 ],
               ),

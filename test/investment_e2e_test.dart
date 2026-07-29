@@ -64,7 +64,7 @@ void main() {
     await tester.tap(find.text('Cash').last);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save investment'));
     await tester.pumpAndSettle();
 
     expect(find.text('Test SIP'), findsOneWidget);
@@ -124,10 +124,10 @@ void main() {
     // Baseline seeded totals: worth 85300, invested 75000.
     final dashScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(
-        find.text('Investment worth'), 150, scrollable: dashScroll);
+        find.text('Investment'), 150, scrollable: dashScroll);
     await tester.pumpAndSettle();
     expect(find.text(money(85300)), findsOneWidget);
-    expect(find.text(money(75000)), findsOneWidget);
+    expect(find.textContaining(money(75000)), findsOneWidget);
 
     // Add an investment (invested 10000, current 12000), no account.
     await E2E.openDrawerItem(tester, 'Investment');
@@ -138,7 +138,7 @@ void main() {
     await tester.enterText(fields.at(1), '10000');
     await tester.enterText(fields.at(2), '12000');
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save investment'));
     await tester.pumpAndSettle();
 
     // Back to the dashboard; totals should grow by the new holding.
@@ -147,9 +147,9 @@ void main() {
 
     final dashScroll2 = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(
-        find.text('Investment worth'), 150, scrollable: dashScroll2);
+        find.text('Investment'), 150, scrollable: dashScroll2);
     await tester.pumpAndSettle();
     expect(find.text(money(85300 + 12000)), findsOneWidget); // worth
-    expect(find.text(money(75000 + 10000)), findsOneWidget); // invested
+    expect(find.textContaining(money(75000 + 10000)), findsOneWidget); // invested
   });
 }

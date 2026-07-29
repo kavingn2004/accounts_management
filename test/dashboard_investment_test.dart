@@ -16,18 +16,19 @@ void main() {
     // The investment cards sit below the worth grid; scroll them into view.
     final dashboardScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(
-      find.text('Investment worth'),
+      find.text('Investment'),
       150,
       scrollable: dashboardScroll,
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Investment worth'), findsOneWidget);
-    expect(find.text('Invested'), findsOneWidget);
+    expect(find.text('Investment'), findsOneWidget);
+    // 'Invested' is now the Investment tile's delta line, not its own card.
+    expect(find.textContaining('invested'), findsOneWidget);
 
     // Seeded investments: current value 58200 + 27100 = 85300;
     // invested 50000 + 25000 = 75000.
     expect(find.text(money(85300)), findsOneWidget);
-    expect(find.text(money(75000)), findsOneWidget);
+    expect(find.textContaining(money(75000)), findsOneWidget);
   });
 }

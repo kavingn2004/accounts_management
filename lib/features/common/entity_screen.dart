@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/components.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
@@ -177,7 +178,10 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.cExpense),
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.colors.negative,
+              foregroundColor: ctx.colors.surface,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete'),
           ),
@@ -228,7 +232,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: cfg.color),
               onPressed: () =>
                   Navigator.pop(ctx, double.tryParse(controller.text.trim())),
               child: const Text('Add'),
@@ -278,7 +281,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Current: ${money(current)}',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                style: context.text.labelMedium
+                      ?.copyWith(color: context.colors.textSecondary)),
             const SizedBox(height: 12),
             TextField(
               controller: controller,
@@ -298,7 +302,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: cfg.color),
             onPressed: () =>
                 Navigator.pop(ctx, double.tryParse(controller.text.trim())),
             child: const Text('Save'),
@@ -350,7 +353,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                 const SizedBox(height: 4),
                 Text('Interest this period: +${money(interest)}',
                     style:
-                        TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                        context.text.labelMedium?.copyWith(
+                            color: context.colors.textSecondary)),
               ],
               const SizedBox(height: 12),
               TextField(
@@ -393,7 +397,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: cfg.color),
               onPressed: () =>
                   Navigator.pop(ctx, double.tryParse(controller.text.trim())),
               child: const Text('Pay'),
@@ -475,7 +478,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                   'Pick an account to record the remaining ${money(remaining)} '
                   'as ${cfg.paymentInflow ? 'received' : 'paid'}. Leave blank '
                   'to just close it without moving money.',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                  style: context.text.labelMedium
+                      ?.copyWith(color: context.colors.textSecondary),
                 ),
               ],
               _accountPicker(label, account, (v) => setSt(() => account = v)),
@@ -487,7 +491,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: cfg.color),
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text('Settle'),
             ),
@@ -585,7 +588,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                   return ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.payments_outlined, color: cfg.color),
+                    leading: Icon(Icons.payments_outlined,
+                        color: cfg.tone.of(context)),
                     title: Text(money(p['amount'] as num?)),
                     subtitle: Text([
                       prettyDate(p['date']?.toString()),
@@ -628,7 +632,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(cfg.title),
-        backgroundColor: cfg.color,
         actions: [
           if (cfg.exportable)
             PopupMenuButton<_ExportFormat>(
@@ -658,10 +661,13 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       ),
       floatingActionButton: cfg.readOnly
           ? null
-          : FloatingActionButton(
-              onPressed: _openSheet,
-              backgroundColor: cfg.color,
-              child: const Icon(Icons.add),
+          : SizedBox(
+              width: 52,
+              height: 52,
+              child: FloatingActionButton(
+                onPressed: _openSheet,
+                child: const Icon(Icons.add, size: 22),
+              ),
             ),
       body: Column(
         children: [
@@ -682,13 +688,19 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                   final rows = _applyFilter(allRows);
                   if (rows.isEmpty) {
                     final hasAny = allRows.isNotEmpty;
-                    final msg = hasAny && cfg.dateFiltered
-                        ? 'No ${cfg.title.toLowerCase()} in this range'
-                        : 'No ${cfg.title.toLowerCase()} yet';
+                    final inRange = hasAny && cfg.dateFiltered;
                     return ListView(
+                      padding: const EdgeInsets.fromLTRB(
+                          AppTheme.screenPad, 80, AppTheme.screenPad, 0),
                       children: [
-                        const SizedBox(height: 120),
-                        Center(child: Text(msg)),
+                        EmptyState(
+                          title: inRange
+                              ? 'Nothing in this range'
+                              : 'No ${cfg.title.toLowerCase()} yet',
+                          message: inRange
+                              ? 'Widen the filter, or add an entry with the + button.'
+                              : 'Tap + to record your first entry.',
+                        ),
                       ],
                     );
                   }
@@ -696,11 +708,18 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                     children: [
                       if (cfg.dateFiltered) _summaryBanner(rows),
                       Expanded(
-                        child: ListView.separated(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.only(
+                            left: AppTheme.screenPad,
+                            right: AppTheme.screenPad,
+                            bottom: 96,
+                          ),
                           itemCount: rows.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, i) =>
-                              _buildRow(context, rows[i]),
+                          itemBuilder: (context, i) => _buildRow(
+                            context,
+                            rows[i],
+                            isLast: i == rows.length - 1,
+                          ),
                         ),
                       ),
                     ],
@@ -714,197 +733,183 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     );
   }
 
-  Widget _buildRow(BuildContext context, Json r) {
+  /// Every editable row gets the overflow button. Design 1e draws the Expenses
+  /// row ending at the amount, but that render had no destructive actions to
+  /// place — leaving edit/delete reachable only by swipe is a real regression
+  /// on web, where dragging a row is awkward. The button is a muted 18px glyph,
+  /// so the row still reads as the design intends.
+  bool get _hasRowActions => true;
+
+  Widget _buildRow(BuildContext context, Json r, {bool isLast = false}) {
+    final c = context.colors;
+    final row = Container(
+      height: AppTheme.rowHeight,
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: c.border),
+          bottom: isLast ? BorderSide(color: c.border) : BorderSide.none,
+        ),
+      ),
+      child: Row(
+        children: [
+          IconChip(cfg.icon, cfg.tone),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  cfg.titleOf(r),
+                  style: context.text.titleMedium,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (cfg.subtitleOf != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    cfg.subtitleOf!(r),
+                    style:
+                        context.text.bodyMedium?.copyWith(color: c.textSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (cfg.trailingOf != null) ...[
+            const SizedBox(width: 8),
+            MoneyText(cfg.trailingOf!(r)),
+          ],
+          if (!cfg.readOnly && _hasRowActions) _rowMenu(r),
+        ],
+      ),
+    );
+
     return Dismissible(
       key: ValueKey(r['id']),
       direction: cfg.readOnly
           ? DismissDirection.none
           : DismissDirection.endToStart,
       background: Container(
-        color: Theme.of(context).colorScheme.errorContainer,
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        child: const Icon(Icons.delete),
+        padding: const EdgeInsets.only(right: 16),
+        color: c.negative.withValues(alpha: 0.12),
+        child: Icon(Icons.delete_outline, color: c.negative, size: 20),
       ),
       confirmDismiss: (_) => _confirmDelete(r),
       onDismissed: (_) => _delete(r),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: cfg.color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(cfg.icon, color: cfg.color, size: 20),
-        ),
-        title: Text(cfg.titleOf(r)),
-        subtitle:
-            cfg.subtitleOf != null ? Text(cfg.subtitleOf!(r)) : null,
-        trailing: cfg.readOnly
-            ? (cfg.trailingOf != null
-                ? Text(cfg.trailingOf!(r),
-                    style: const TextStyle(fontWeight: FontWeight.bold))
-                : null)
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (cfg.trailingOf != null)
-                    Text(cfg.trailingOf!(r),
-                        style:
-                            const TextStyle(fontWeight: FontWeight.bold)),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: (v) async {
-                      if (v == 'add_amount') {
-                        _addAmount(r);
-                      } else if (v == 'set_value') {
-                        _setValue(r);
-                      } else if (v == 'pay') {
-                        _payAmount(r);
-                      } else if (v == 'payments') {
-                        _showPayments(r);
-                      } else if (v == 'settle') {
-                        _markSettled(r);
-                      } else if (v == 'reopen') {
-                        _reopen(r);
-                      } else if (v == 'edit') {
-                        _openSheet(existing: r);
-                      } else if (v == 'delete') {
-                        if (await _confirmDelete(r)) _delete(r);
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      if (cfg.incrementField != null)
-                        PopupMenuItem(
-                          value: 'add_amount',
-                          child: ListTile(
-                            leading: Icon(Icons.add_circle_outline,
-                                color: cfg.color),
-                            title:
-                                Text(cfg.incrementLabel ?? 'Add amount'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      if (cfg.setField != null)
-                        PopupMenuItem(
-                          value: 'set_value',
-                          child: ListTile(
-                            leading:
-                                Icon(Icons.edit_note, color: cfg.color),
-                            title: Text(cfg.setLabel ?? 'Update value'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      if (cfg.decrementField != null &&
-                          (r['status'] ?? '') != 'settled')
-                        PopupMenuItem(
-                          value: 'pay',
-                          child: ListTile(
-                            leading: Icon(Icons.payments_outlined,
-                                color: cfg.color),
-                            title:
-                                Text(cfg.decrementLabel ?? 'Add payment'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      if (cfg.paymentsTable != null)
-                        PopupMenuItem(
-                          value: 'payments',
-                          child: ListTile(
-                            leading: Icon(Icons.history, color: cfg.color),
-                            title: const Text('Payments'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      if (cfg.statusField != null &&
-                          (r['status'] ?? '') != 'settled')
-                        const PopupMenuItem(
-                          value: 'settle',
-                          child: ListTile(
-                            leading: Icon(Icons.check_circle_outline,
-                                color: Colors.green),
-                            title: Text('Mark as settled'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      if (cfg.statusField != null &&
-                          (r['status'] ?? '') == 'settled')
-                        const PopupMenuItem(
-                          value: 'reopen',
-                          child: ListTile(
-                            leading: Icon(Icons.lock_open_outlined),
-                            title: Text('Reopen'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      const PopupMenuItem(
-                        value: 'edit',
-                        child: ListTile(
-                          leading: Icon(Icons.edit_outlined),
-                          title: Text('Edit'),
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: ListTile(
-                          leading: Icon(Icons.delete_outline,
-                              color: AppTheme.cExpense),
-                          title: Text('Delete'),
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+      child: InkWell(
         onTap: cfg.readOnly ? null : () => _openSheet(existing: r),
+        child: row,
+      ),
+    );
+  }
+
+  Widget _rowMenu(Json r) {
+    final c = context.colors;
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, size: 18, color: c.textSecondary),
+      padding: EdgeInsets.zero,
+      splashRadius: 18,
+      color: c.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+        side: BorderSide(color: c.border),
+      ),
+      onSelected: (v) async {
+        if (v == 'add_amount') {
+          _addAmount(r);
+        } else if (v == 'set_value') {
+          _setValue(r);
+        } else if (v == 'pay') {
+          _payAmount(r);
+        } else if (v == 'payments') {
+          _showPayments(r);
+        } else if (v == 'settle') {
+          _markSettled(r);
+        } else if (v == 'reopen') {
+          _reopen(r);
+        } else if (v == 'edit') {
+          _openSheet(existing: r);
+        } else if (v == 'delete') {
+          if (await _confirmDelete(r)) _delete(r);
+        }
+      },
+      itemBuilder: (_) => [
+        if (cfg.incrementField != null)
+          _menuItem('add_amount', Icons.add_circle_outline,
+              cfg.incrementLabel ?? 'Add amount', cfg.tone.of(context)),
+        if (cfg.setField != null)
+          _menuItem('set_value', Icons.edit_note,
+              cfg.setLabel ?? 'Update value', cfg.tone.of(context)),
+        if (cfg.decrementField != null && (r['status'] ?? '') != 'settled')
+          _menuItem('pay', Icons.payments_outlined,
+              cfg.decrementLabel ?? 'Add payment', cfg.tone.of(context)),
+        if (cfg.paymentsTable != null)
+          _menuItem('payments', Icons.history, 'Payments',
+              cfg.tone.of(context)),
+        if (cfg.statusField != null && (r['status'] ?? '') != 'settled')
+          _menuItem('settle', Icons.check_circle_outline, 'Mark as settled',
+              c.positive),
+        if (cfg.statusField != null && (r['status'] ?? '') == 'settled')
+          _menuItem('reopen', Icons.lock_open_outlined, 'Reopen',
+              c.textSecondary),
+        _menuItem('edit', Icons.edit_outlined, 'Edit', c.textSecondary),
+        _menuItem('delete', Icons.delete_outline, 'Delete', c.negative),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(
+      String value, IconData icon, String label, Color color) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 44,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 12),
+          // Flexible, not bare Text: long labels ("Update current value")
+          // otherwise overflow the popup's constrained width.
+          Flexible(
+            child: Text(
+              label,
+              style: context.text.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildFilterBar() {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        border: Border(
-          bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5)),
-        ),
-      ),
-      child: SingleChildScrollView(
+    return SizedBox(
+      height: 42,
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final r in _DateRange.values)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  label: Text(_chipLabel(r)),
-                  selected: _dateRange == r,
-                  showCheckmark: false,
-                  selectedColor: cfg.color,
-                  labelStyle: TextStyle(
-                    color: _dateRange == r
-                        ? Colors.white
-                        : theme.colorScheme.onSurface,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                  ),
-                  onSelected: (_) {
-                    if (r == _DateRange.custom) {
-                      _pickCustomRange();
-                    } else {
-                      setState(() => _dateRange = r);
-                    }
-                  },
-                ),
-              ),
-          ],
-        ),
+        padding: const EdgeInsets.fromLTRB(
+            AppTheme.screenPad, 0, AppTheme.screenPad, 12),
+        itemCount: _DateRange.values.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final r = _DateRange.values[i];
+          return AppFilterChip(
+            label: _chipLabel(r),
+            selected: _dateRange == r,
+            onTap: () {
+              if (r == _DateRange.custom) {
+                _pickCustomRange();
+              } else {
+                setState(() => _dateRange = r);
+              }
+            },
+          );
+        },
       ),
     );
   }
@@ -922,29 +927,51 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       0,
       (a, r) => a + ((r['amount'] as num?)?.toDouble() ?? 0),
     );
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: cfg.color.withValues(alpha: 0.08),
-      child: Row(
-        children: [
-          Text(
-            '${rows.length} ${rows.length == 1 ? 'entry' : 'entries'}',
-            style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
-          ),
-          const Spacer(),
-          Text(
-            'Total: ${money(total)}',
-            style: TextStyle(
-              color: cfg.color,
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppTheme.screenPad, 0, AppTheme.screenPad, 12),
+      child: AppCard(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _summaryLabel(),
+                    style: context.text.labelMedium
+                        ?.copyWith(color: c.textSecondary),
+                  ),
+                  const SizedBox(height: 2),
+                  MoneyText(money(total), serif: true),
+                ],
+              ),
             ),
-          ),
-        ],
+            Text(
+              '${rows.length} ${rows.length == 1 ? 'entry' : 'entries'}',
+              style: context.text.labelMedium?.copyWith(
+                color: c.textSecondary,
+                fontFeatures: tabular,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  String _summaryLabel() => switch (_dateRange) {
+        _DateRange.today => 'Total today',
+        _DateRange.week => 'Total this week',
+        _DateRange.month => 'Total this month',
+        _DateRange.year => 'Total this year',
+        _DateRange.all => 'Total',
+        _DateRange.custom => 'Total in range',
+      };
 }
 
 enum _DateRange { today, week, month, year, all, custom }
@@ -969,14 +996,10 @@ class _ErrorView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
+      padding: const EdgeInsets.fromLTRB(
+          AppTheme.screenPad, 80, AppTheme.screenPad, 0),
       children: [
-        const SizedBox(height: 80),
-        const Icon(Icons.error_outline, size: 48),
-        const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(message, textAlign: TextAlign.center),
-        ),
+        EmptyState(title: "That didn't load", message: message),
       ],
     );
   }
@@ -1182,39 +1205,68 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, bottomInset + 16),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('${_isEdit ? 'Edit' : 'Add'} ${cfg.title}',
-                style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            ...cfg.fields.map(_buildField),
-            if (_showPrincipalAccount && _accountNames.isNotEmpty)
-              _buildPrincipalAccountPicker(),
-            if (_showPaidFromAccount && _accountNames.isNotEmpty)
-              _buildPaidFromAccountPicker(),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(_error!,
-                  style:
-                      TextStyle(color: Theme.of(context).colorScheme.error)),
+    final c = context.colors;
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            AppTheme.screenPad, 12, AppTheme.screenPad, bottomInset + 24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SheetHandle(),
+              Text(
+                '${_isEdit ? 'Edit' : 'Add'} ${cfg.title.toLowerCase()}',
+                style: context.text.headlineSmall,
+              ),
+              const SizedBox(height: 18),
+              ...cfg.fields.map(_buildField),
+              if (_showPrincipalAccount && _accountNames.isNotEmpty)
+                _buildPrincipalAccountPicker(),
+              if (_showPaidFromAccount && _accountNames.isNotEmpty)
+                _buildPaidFromAccountPicker(),
+              if (_error != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _error!,
+                  style: context.text.labelMedium?.copyWith(color: c.negative),
+                ),
+              ],
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 110,
+                    child: OutlinedButton(
+                      onPressed:
+                          _busy ? null : () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _busy ? null : _submit,
+                      child: _busy
+                          ? SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: c.onButtonFill,
+                              ),
+                            )
+                          : Text(_isEdit
+                              ? 'Update ${cfg.title.toLowerCase()}'
+                              : 'Save ${cfg.title.toLowerCase()}'),
+                    ),
+                  ),
+                ],
+              ),
             ],
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _busy ? null : _submit,
-              child: _busy
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : Text(_isEdit ? 'Update' : 'Save'),
-            ),
-          ],
+          ),
         ),
       ),
     );

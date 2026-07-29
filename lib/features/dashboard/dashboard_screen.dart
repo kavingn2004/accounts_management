@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/components.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
@@ -11,9 +12,9 @@ import '../common/entity_screen.dart';
 import '../registry.dart';
 import 'analytics.dart';
 
-/// Analytics dashboard: net-worth banner, income/expense cards, and charts
-/// (income-vs-expense bars + expense pie) with a Week/Month/Year filter.
-/// Modules are reached from the sidebar.
+/// Analytics dashboard: net-worth card, a grid of module metrics, and charts.
+/// The period filter lives in the chart header — it only ever affected the
+/// chart and the two period totals, so putting it there says so.
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
@@ -33,13 +34,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   late Future<_DashboardData> _future;
   Period _period = Period.month;
 
-  static const _pieColors = [
-    AppTheme.cExpense,
-    AppTheme.cInvest,
-    AppTheme.cBills,
-    AppTheme.cSavings,
-    AppTheme.cAlerts,
-    Color(0xFF8D6E63),
+  /// Breakdown bars use muted module tones rather than six saturated hues.
+  /// Order matters: adjacent entries must not share a hue family, so `alerts`
+  /// (#4A4A7A) is deliberately absent — it reads as the same purple as
+  /// `invest` at bar size, in both themes.
+  static const _breakdownTones = [
+    ModuleTone.expense, // red
+    ModuleTone.invest, // purple
+    ModuleTone.bills, // ochre
+    ModuleTone.savings, // teal
+    ModuleTone.debtor, // blue
+    ModuleTone.loan, // brown
   ];
 
   @override
@@ -88,129 +93,84 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           final d = data?.summary;
           final buckets =
               buildBuckets(_period, data?.income ?? [], data?.expenses ?? []);
-          final pie = buildExpensePie(_period, data?.expenses ?? []);
-          // Period totals drive the cards so they track the Week/Month/Year filter.
-          final periodIncome =
-              buckets.fold<double>(0, (a, b) => a + b.income);
-          final periodExpense =
-              buckets.fold<double>(0, (a, b) => a + b.expense);
+          final breakdown =
+              buildExpenseBreakdown(_period, data?.expenses ?? []);
+          final periodIncome = buckets.fold<double>(0, (a, b) => a + b.income);
+          final periodExpense = buckets.fold<double>(0, (a, b) => a + b.expense);
+          final periodLabel = _period.label.toLowerCase();
 
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(
+                AppTheme.screenPad, 0, AppTheme.screenPad, 96),
             children: [
-              _NetWorthBanner(value: money(d?['net_worth'] as num?)),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Current worth',
-                      value: money(d?['current_worth'] as num?),
-                      icon: Icons.account_balance_wallet,
-                      color: AppTheme.cIncome,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Saving worth',
-                      value: money(d?['saving_worth'] as num?),
-                      icon: Icons.savings,
-                      color: AppTheme.cSavings,
-                      onTap: () => _openModule(context, Modules.savings),
-                    ),
-                  ),
-                ],
+              _NetWorthCard(
+                netWorth: money(d?['net_worth'] as num?),
+                currentWorth: money(d?['current_worth'] as num?),
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Debt worth',
-                      value: money(d?['debt_worth'] as num?),
-                      icon: Icons.person_add_alt,
-                      color: AppTheme.cDebtor,
-                      onTap: () => _openModule(context, Modules.debtors),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Credit worth',
-                      value: money(d?['credit_worth'] as num?),
-                      icon: Icons.person_remove_alt_1,
-                      color: AppTheme.cCreditor,
-                      onTap: () => _openModule(context, Modules.creditors),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Investment worth',
-                      value: money(d?['investment_worth'] as num?),
-                      icon: Icons.trending_up,
-                      color: AppTheme.cInvest,
-                      onTap: () => _openModule(context, Modules.investment),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Invested',
-                      value: money(d?['invested_total'] as num?),
-                      icon: Icons.account_balance_wallet,
-                      color: AppTheme.cInvest,
-                      onTap: () => _openModule(context, Modules.investment),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if ((data?.accounts ?? []).isNotEmpty)
+              const SizedBox(height: 10),
+              _MetricGrid(children: [
+                MetricTile(
+                  icon: Icons.south_west,
+                  tone: ModuleTone.income,
+                  label: 'Income ($periodLabel)',
+                  value: money(periodIncome),
+                  onTap: () => _openModule(context, Modules.income),
+                ),
+                MetricTile(
+                  icon: Icons.north_east,
+                  tone: ModuleTone.expense,
+                  label: 'Expense ($periodLabel)',
+                  value: money(periodExpense),
+                  onTap: () => _openModule(context, Modules.expenses),
+                ),
+                MetricTile(
+                  icon: Icons.savings,
+                  tone: ModuleTone.savings,
+                  label: 'Savings',
+                  value: money(d?['saving_worth'] as num?),
+                  onTap: () => _openModule(context, Modules.savings),
+                ),
+                MetricTile(
+                  icon: Icons.trending_up,
+                  tone: ModuleTone.invest,
+                  label: 'Investment',
+                  value: money(d?['investment_worth'] as num?),
+                  delta: 'invested ${money(d?['invested_total'] as num?)}',
+                  onTap: () => _openModule(context, Modules.investment),
+                ),
+                MetricTile(
+                  icon: Icons.person_add_alt,
+                  tone: ModuleTone.debtor,
+                  label: 'Debtors',
+                  value: money(d?['debt_worth'] as num?),
+                  onTap: () => _openModule(context, Modules.debtors),
+                ),
+                MetricTile(
+                  icon: Icons.person_remove_alt_1,
+                  tone: ModuleTone.creditor,
+                  label: 'Creditors',
+                  value: money(d?['credit_worth'] as num?),
+                  onTap: () => _openModule(context, Modules.creditors),
+                ),
+              ]),
+              if ((data?.accounts ?? []).isNotEmpty) ...[
+                const SizedBox(height: 10),
                 _BalancesCard(accounts: data!.accounts),
-              const SizedBox(height: 4),
-              _PeriodFilter(
-                period: _period,
-                onChanged: (p) => setState(() => _period = p),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Income (${_period.label.toLowerCase()})',
-                      value: money(periodIncome),
-                      icon: Icons.south_west,
-                      color: AppTheme.cIncome,
-                      onTap: () => _openModule(context, Modules.income),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _MetricCard(
-                      label: 'Expense (${_period.label.toLowerCase()})',
-                      value: money(periodExpense),
-                      icon: Icons.north_east,
-                      color: AppTheme.cExpense,
-                      onTap: () => _openModule(context, Modules.expenses),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
+              ],
+              const SizedBox(height: 10),
               _ChartCard(
-                title: 'Income vs Expense',
+                title: 'Income vs expense',
+                trailing: _PeriodPill(
+                  period: _period,
+                  onChanged: (p) => setState(() => _period = p),
+                ),
                 child: _BarChart(buckets: buckets),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               _ChartCard(
                 title: 'Expense breakdown',
-                child: _ExpensePie(slices: pie, colors: _pieColors),
+                child: _ExpenseBars(
+                    slices: breakdown, tones: _breakdownTones),
               ),
             ],
           );
@@ -220,31 +180,33 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 }
 
-/// ---------- Filter ----------
-class _PeriodFilter extends StatelessWidget {
-  const _PeriodFilter({required this.period, required this.onChanged});
-  final Period period;
-  final ValueChanged<Period> onChanged;
+/// Two-column metric grid. A plain wrap keeps every tile the same height
+/// without the fixed aspect ratio a GridView would impose.
+class _MetricGrid extends StatelessWidget {
+  const _MetricGrid({required this.children});
+  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
       children: [
-        for (final p in Period.values)
+        for (var i = 0; i < children.length; i += 2)
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(p.label),
-              selected: period == p,
-              showCheckmark: false,
-              selectedColor: AppTheme.primary,
-              labelStyle: TextStyle(
-                color: period == p
-                    ? Colors.white
-                    : Theme.of(context).colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
+            padding: EdgeInsets.only(
+                bottom: i + 2 < children.length ? 10 : 0),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: children[i]),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: i + 1 < children.length
+                        ? children[i + 1]
+                        : const SizedBox.shrink(),
+                  ),
+                ],
               ),
-              onSelected: (_) => onChanged(p),
             ),
           ),
       ],
@@ -252,25 +214,51 @@ class _PeriodFilter extends StatelessWidget {
   }
 }
 
-/// ---------- Chart card wrapper ----------
-class _ChartCard extends StatelessWidget {
-  const _ChartCard({required this.title, required this.child});
-  final String title;
-  final Widget child;
+/// Net worth beside current (liquid) worth, split by a hairline.
+class _NetWorthCard extends StatelessWidget {
+  const _NetWorthCard({required this.netWorth, required this.currentWorth});
+  final String netWorth;
+  final String currentWorth;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final c = context.colors;
+    return AppCard(
+      child: IntrinsicHeight(
+        child: Row(
           children: [
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            child,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Net worth',
+                      style: context.text.labelMedium
+                          ?.copyWith(color: c.textSecondary)),
+                  const SizedBox(height: 2),
+                  MoneyText(netWorth, style: context.text.displayMedium),
+                ],
+              ),
+            ),
+            const SizedBox(width: 14),
+            VerticalDivider(width: 1, thickness: 1, color: c.border),
+            const SizedBox(width: 14),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Current value',
+                    style: context.text.labelMedium
+                        ?.copyWith(color: c.textSecondary)),
+                const SizedBox(height: 2),
+                MoneyText(currentWorth, style: context.text.titleLarge),
+                const SizedBox(height: 2),
+                Text('Wallet + bank',
+                    style: context.text.labelSmall
+                        ?.copyWith(color: c.textSecondary)),
+              ],
+            ),
           ],
         ),
       ),
@@ -278,28 +266,120 @@ class _ChartCard extends StatelessWidget {
   }
 }
 
-/// ---------- Bar chart ----------
+/// Bordered pill in the chart header that swaps the period.
+class _PeriodPill extends StatelessWidget {
+  const _PeriodPill({required this.period, required this.onChanged});
+  final Period period;
+  final ValueChanged<Period> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return PopupMenuButton<Period>(
+      initialValue: period,
+      onSelected: onChanged,
+      tooltip: 'Period',
+      color: c.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+        side: BorderSide(color: c.border),
+      ),
+      itemBuilder: (_) => [
+        for (final p in Period.values)
+          PopupMenuItem(
+            value: p,
+            height: 40,
+            child: Text(p.label, style: context.text.bodyMedium),
+          ),
+      ],
+      child: Container(
+        height: 26,
+        padding: const EdgeInsets.only(left: 9, right: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: c.border),
+          borderRadius: BorderRadius.circular(AppTheme.rChip),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(period.label, style: context.text.labelMedium),
+            const SizedBox(width: 5),
+            Icon(Icons.keyboard_arrow_down, size: 13, color: c.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChartCard extends StatelessWidget {
+  const _ChartCard({required this.title, required this.child, this.trailing});
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: Text(title, style: context.text.titleMedium)),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
 class _BarChart extends StatelessWidget {
   const _BarChart({required this.buckets});
   final List<Bucket> buckets;
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     final maxVal = buckets.fold<double>(
-        0, (m, b) => [m, b.income, b.expense].reduce((a, c) => a > c ? a : c));
-    if (maxVal <= 0) return const _EmptyChart(message: 'No data for this period');
+        0, (m, b) => [m, b.income, b.expense].reduce((a, x) => a > x ? a : x));
+    if (maxVal <= 0) {
+      return const _EmptyChart(message: 'No data for this period');
+    }
 
     return Column(
       children: [
         SizedBox(
-          height: 200,
+          height: 150,
           child: BarChart(
             BarChartData(
-              maxY: maxVal * 1.2,
+              maxY: maxVal * 1.15,
               alignment: BarChartAlignment.spaceAround,
               gridData: const FlGridData(show: false),
-              borderData: FlBorderData(show: false),
-              barTouchData: const BarTouchData(enabled: true),
+              borderData: FlBorderData(
+                show: true,
+                border: Border(bottom: BorderSide(color: c.border)),
+              ),
+              barTouchData: BarTouchData(
+                enabled: true,
+                touchTooltipData: BarTouchTooltipData(
+                  getTooltipColor: (_) => c.textPrimary,
+                  getTooltipItem: (group, _, rod, __) => BarTooltipItem(
+                    money(rod.toY),
+                    TextStyle(
+                      color: c.bg,
+                      fontFamily: AppTheme.sans,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
               titlesData: FlTitlesData(
                 leftTitles:
                     const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -310,14 +390,17 @@ class _BarChart extends StatelessWidget {
                 bottomTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
-                    reservedSize: 24,
+                    reservedSize: 22,
                     getTitlesWidget: (value, meta) {
                       final i = value.toInt();
                       if (i < 0 || i >= buckets.length) return const SizedBox();
                       return Padding(
                         padding: const EdgeInsets.only(top: 6),
-                        child: Text(buckets[i].label,
-                            style: const TextStyle(fontSize: 10)),
+                        child: Text(
+                          buckets[i].label,
+                          style: context.text.labelSmall
+                              ?.copyWith(color: c.textSecondary),
+                        ),
                       );
                     },
                   ),
@@ -325,33 +408,31 @@ class _BarChart extends StatelessWidget {
               ),
               barGroups: [
                 for (var i = 0; i < buckets.length; i++)
-                  BarChartGroupData(x: i, barRods: [
+                  BarChartGroupData(x: i, barsSpace: 5, barRods: [
                     BarChartRodData(
                       toY: buckets[i].income,
-                      color: AppTheme.cIncome,
-                      width: 7,
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(3)),
+                      color: c.positive,
+                      width: 14,
+                      borderRadius: BorderRadius.circular(3),
                     ),
                     BarChartRodData(
                       toY: buckets[i].expense,
-                      color: AppTheme.cExpense,
-                      width: 7,
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(3)),
+                      color: c.negative,
+                      width: 14,
+                      borderRadius: BorderRadius.circular(3),
                     ),
                   ]),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        const Row(
+        const SizedBox(height: 10),
+        Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _LegendDot(color: AppTheme.cIncome, label: 'Income'),
-            SizedBox(width: 20),
-            _LegendDot(color: AppTheme.cExpense, label: 'Expense'),
+            _LegendDot(color: c.positive, label: 'Income'),
+            const SizedBox(width: 20),
+            _LegendDot(color: c.negative, label: 'Expense'),
           ],
         ),
       ],
@@ -359,66 +440,121 @@ class _BarChart extends StatelessWidget {
   }
 }
 
-/// ---------- Pie chart ----------
-class _ExpensePie extends StatelessWidget {
-  const _ExpensePie({required this.slices, required this.colors});
-  final List<PieSlice> slices;
-  final List<Color> colors;
+/// Expense breakdown as horizontal bars, largest first. Shows the top
+/// [_collapsedCount] and expands to every payee on demand.
+class _ExpenseBars extends StatefulWidget {
+  const _ExpenseBars({required this.slices, required this.tones});
+  final List<BreakdownSlice> slices;
+  final List<ModuleTone> tones;
+
+  @override
+  State<_ExpenseBars> createState() => _ExpenseBarsState();
+}
+
+class _ExpenseBarsState extends State<_ExpenseBars> {
+  static const _collapsedCount = 5;
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(_ExpenseBars old) {
+    super.didUpdateWidget(old);
+    // Changing the period rebuilds the list; collapse so the card doesn't
+    // silently stay long after the user switches to a busier month.
+    if (old.slices.length != widget.slices.length) _expanded = false;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final total = slices.fold<double>(0, (a, s) => a + s.value);
-    if (total <= 0) return const _EmptyChart(message: 'No expenses to show');
+    final c = context.colors;
+    final slices = widget.slices;
+    if (slices.isEmpty) return const _EmptyChart(message: 'No expenses to show');
+
+    // Scale against the largest slice, not the total — otherwise a dominant
+    // first row squashes everything below it into invisible slivers.
+    final maxVal = slices.fold<double>(0, (m, s) => s.value > m ? s.value : m);
+    final hidden = slices.length - _collapsedCount;
+    final shown =
+        _expanded ? slices.length : slices.length.clamp(0, _collapsedCount);
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          height: 180,
-          child: PieChart(
-            PieChartData(
-              sectionsSpace: 2,
-              centerSpaceRadius: 40,
-              sections: [
-                for (var i = 0; i < slices.length; i++)
-                  PieChartSectionData(
-                    value: slices[i].value,
-                    color: colors[i % colors.length],
-                    radius: 56,
-                    title: '${(slices[i].value / total * 100).round()}%',
-                    titleStyle: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
+        for (var i = 0; i < shown; i++)
+          Padding(
+            padding: EdgeInsets.only(bottom: i == shown - 1 ? 0 : 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        slices[i].label,
+                        style: context.text.bodyMedium,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    MoneyText(money(slices[i].value)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final frac = maxVal > 0 ? slices[i].value / maxVal : 0.0;
+                    return Container(
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: c.border,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          width: (constraints.maxWidth * frac)
+                              .clamp(3.0, constraints.maxWidth),
+                          decoration: BoxDecoration(
+                            color:
+                                widget.tones[i % widget.tones.length].of(context),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        // Legend
-        ...List.generate(slices.length, (i) {
-          final s = slices[i];
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Row(
-              children: [
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: colors[i % colors.length],
-                    borderRadius: BorderRadius.circular(3),
+        if (hidden > 0) ...[
+          const SizedBox(height: 14),
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(AppTheme.rChip),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _expanded ? 'Show less' : 'See more ($hidden)',
+                    style: context.text.labelMedium
+                        ?.copyWith(color: c.accentText),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(child: Text(s.label)),
-                Text(money(s.value),
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-              ],
+                  const SizedBox(width: 4),
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 16,
+                    color: c.accentText,
+                  ),
+                ],
+              ),
             ),
-          );
-        }),
+          ),
+        ],
       ],
     );
   }
@@ -435,13 +571,17 @@ class _LegendDot extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 12,
-          height: 12,
+          width: 10,
+          height: 10,
           decoration: BoxDecoration(
               color: color, borderRadius: BorderRadius.circular(3)),
         ),
         const SizedBox(width: 6),
-        Text(label, style: const TextStyle(fontSize: 12)),
+        Text(
+          label,
+          style: context.text.labelSmall
+              ?.copyWith(color: context.colors.textSecondary),
+        ),
       ],
     );
   }
@@ -454,60 +594,13 @@ class _EmptyChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 120,
+      height: 110,
       child: Center(
-        child: Text(message, style: TextStyle(color: Colors.grey.shade500)),
-      ),
-    );
-  }
-}
-
-/// ---------- Header cards (unchanged style) ----------
-class _NetWorthBanner extends StatelessWidget {
-  const _NetWorthBanner({required this.value});
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          colors: [AppTheme.primaryDark, AppTheme.accent],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        child: Text(
+          message,
+          style: context.text.bodyMedium
+              ?.copyWith(color: context.colors.textSecondary),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.primary.withValues(alpha: 0.30),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.account_balance, color: Colors.white70, size: 18),
-              SizedBox(width: 6),
-              Text('Net worth',
-                  style: TextStyle(color: Colors.white70, fontSize: 14)),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -520,97 +613,43 @@ class _BalancesCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Balances',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            ...accounts.map((a) {
-              final bal = (a['balance'] as num?)?.toDouble() ?? 0;
-              final isBank = (a['type'] ?? 'cash') == 'bank';
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    Icon(isBank ? Icons.account_balance : Icons.payments,
-                        size: 18, color: AppTheme.primary),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(a['name'].toString())),
-                    Text(money(bal),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: bal < 0 ? AppTheme.cExpense : null,
-                        )),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-    this.onTap,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    final c = context.colors;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Balances', style: context.text.titleMedium),
+          const SizedBox(height: 6),
+          ...accounts.map((a) {
+            final bal = (a['balance'] as num?)?.toDouble() ?? 0;
+            final isBank = (a['type'] ?? 'cash') == 'bank';
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(icon, color: color, size: 20),
+                  IconChip(
+                    isBank ? Icons.account_balance : Icons.payments_outlined,
+                    isBank ? ModuleTone.savings : ModuleTone.bills,
+                    size: 28,
                   ),
-                  if (onTap != null) ...[
-                    const Spacer(),
-                    Icon(Icons.chevron_right,
-                        size: 18, color: Colors.grey.shade400),
-                  ],
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      a['name'].toString(),
+                      style: context.text.bodyLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  MoneyText(
+                    money(bal),
+                    color: bal < 0 ? c.negative : null,
+                  ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Text(label,
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-              const SizedBox(height: 4),
-              Text(
-                value,
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-        ),
+            );
+          }),
+        ],
       ),
     );
   }

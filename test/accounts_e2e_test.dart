@@ -25,10 +25,10 @@ void main() {
     await E2E.launch(tester);
     await E2E.openDrawerItem(tester, 'Accounts');
 
-    expect(find.text('Total balance'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Add Bank'), findsOneWidget);
+    expect(find.textContaining('Total across'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Add bank'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Add Bank'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Add bank'));
     await tester.pumpAndSettle();
 
     // Dialog: name field (0), opening balance field (1).

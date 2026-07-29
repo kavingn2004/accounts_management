@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config.dart';
 import '../../core/supabase_config.dart';
+import '../../core/components.dart';
 import '../../core/theme.dart';
 import '../../services/providers.dart';
 
@@ -96,7 +97,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('Cancel')),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.cExpense),
+              style: FilledButton.styleFrom(
+                backgroundColor: ctx.colors.negative,
+                foregroundColor: ctx.colors.surface,
+              ),
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text('Confirm'),
             ),
@@ -105,157 +109,144 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ) ??
       false;
 
+  /// Up to two initials for the avatar ("Rohit Menon" -> "RM").
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+    if (parts.isEmpty) return '?';
+    return parts.take(2).map((p) => p[0].toUpperCase()).join();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Scaffold(
       appBar: AppBar(title: const Text('Profile')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(
+            AppTheme.screenPad, 12, AppTheme.screenPad, 24),
         children: [
-          Center(
-            child: Column(
-              children: [
-                CircleAvatar(
-                  radius: 44,
-                  backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
-                  child: Text(
-                    _name.isNotEmpty ? _name[0].toUpperCase() : '?',
-                    style: const TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.primary),
-                  ),
+          Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: c.accent.withValues(alpha: c.chipAlpha + 0.02),
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(height: 12),
-                Text(_name,
-                    style: const TextStyle(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
-                Text(
-                  SupabaseConfig.enabled
-                      ? (Supabase.instance.client.auth.currentUser?.email ??
-                          'Synced to your account')
-                      : 'Stored on this device',
-                  style: TextStyle(color: Colors.grey.shade600),
+                child: Text(
+                  _initials(_name),
+                  style: AppTheme.display(20, height: 26, color: c.accentText),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_name.isEmpty ? 'You' : _name,
+                        style: context.text.headlineSmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 2),
+                    Text(
+                      SupabaseConfig.enabled
+                          ? (Supabase.instance.client.auth.currentUser?.email ??
+                              'Synced to your account')
+                          : 'Stored on this device',
+                      style: context.text.bodySmall
+                          ?.copyWith(color: c.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          const SectionLabel('Account'),
+          SettingsRow(label: 'Name', value: _name, onTap: _editName),
+          const SettingsRow(
+            label: 'Currency',
+            value: '${AppConfig.currencySymbol} INR',
+            isLast: true,
+          ),
+          const SizedBox(height: 24),
+
+          const SectionLabel('Preferences'),
+          Container(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: c.border),
+                bottom: BorderSide(color: c.border),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Theme', style: context.text.bodyLarge),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(
+                          value: ThemeMode.light, label: Text('Light')),
+                      ButtonSegment(
+                          value: ThemeMode.dark, label: Text('Dark')),
+                      ButtonSegment(
+                          value: ThemeMode.system, label: Text('System')),
+                    ],
+                    selected: {ref.watch(themeModeProvider)},
+                    showSelectedIcon: false,
+                    style: SegmentedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: c.textSecondary,
+                      selectedBackgroundColor:
+                          c.accent.withValues(alpha: c.chipAlpha),
+                      selectedForegroundColor: c.textPrimary,
+                      side: BorderSide(color: c.border),
+                      textStyle: context.text.labelMedium,
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.rChip),
+                      ),
+                    ),
+                    onSelectionChanged: (s) =>
+                        ref.read(themeModeProvider.notifier).state = s.first,
+                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 24),
 
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.person_outline,
-                      color: AppTheme.primary),
-                  title: const Text('Name', style: TextStyle(fontSize: 13)),
-                  subtitle: Text(_name,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w500)),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit_outlined),
-                    onPressed: _editName,
-                  ),
-                ),
-                const Divider(height: 1),
-                const ListTile(
-                  leading: Icon(Icons.payments_outlined,
-                      color: AppTheme.primary),
-                  title: Text('Currency', style: TextStyle(fontSize: 13)),
-                  subtitle: Text('${AppConfig.currencySymbol}  (INR)',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w500)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
+          const SectionLabel('Security'),
+          SettingsRow(label: 'Lock app', onTap: _lock),
+          SettingsRow(label: 'Reset PIN', onTap: _resetPin, isLast: true),
+          const SizedBox(height: 24),
 
-          // Appearance — light / dark / system
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.brightness_6_outlined,
-                          color: AppTheme.primary, size: 20),
-                      SizedBox(width: 8),
-                      Text('Appearance',
-                          style: TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: SegmentedButton<ThemeMode>(
-                      segments: const [
-                        ButtonSegment(
-                            value: ThemeMode.light,
-                            icon: Icon(Icons.light_mode),
-                            label: Text('Light')),
-                        ButtonSegment(
-                            value: ThemeMode.dark,
-                            icon: Icon(Icons.dark_mode),
-                            label: Text('Dark')),
-                        ButtonSegment(
-                            value: ThemeMode.system,
-                            icon: Icon(Icons.settings_suggest),
-                            label: Text('System')),
-                      ],
-                      selected: {ref.watch(themeModeProvider)},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (s) => ref
-                          .read(themeModeProvider.notifier)
-                          .state = s.first,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          OutlinedButton.icon(
-            onPressed: _lock,
-            icon: const Icon(Icons.lock_outline),
-            label: const Text('Lock app'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-              foregroundColor: AppTheme.primary,
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _resetPin,
-            icon: const Icon(Icons.pin_outlined),
-            label: const Text('Reset PIN'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-              foregroundColor: AppTheme.primary,
-            ),
-          ),
-          const SizedBox(height: 12),
           if (SupabaseConfig.enabled)
-            OutlinedButton.icon(
+            OutlinedButton(
               onPressed: _signOut,
-              icon: const Icon(Icons.logout, color: AppTheme.cExpense),
-              label: const Text('Sign out',
-                  style: TextStyle(color: AppTheme.cExpense)),
               style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-                foregroundColor: AppTheme.cExpense,
+                foregroundColor: c.negative,
+                side: BorderSide(color: c.negative),
               ),
+              child: const Text('Sign out'),
             )
           else
-            TextButton.icon(
+            OutlinedButton(
               onPressed: _clearData,
-              icon: const Icon(Icons.delete_forever, color: AppTheme.cExpense),
-              label: const Text('Clear all data',
-                  style: TextStyle(color: AppTheme.cExpense)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.negative,
+                side: BorderSide(color: c.negative),
+              ),
+              child: const Text('Clear all data'),
             ),
         ],
       ),

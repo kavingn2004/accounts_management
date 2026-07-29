@@ -75,7 +75,8 @@ void main() {
 
     tester.firstState<ScaffoldState>(find.byType(Scaffold)).openDrawer();
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Income'));
+    await tester.tap(find.descendant(
+        of: find.byType(Drawer), matching: find.text('Income')));
     await tester.pumpAndSettle();
 
     // Show all dates so the seeded 'Salary' (dated weeks ago) is visible

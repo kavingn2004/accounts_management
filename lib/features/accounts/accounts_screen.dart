@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/components.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
@@ -18,9 +19,9 @@ class AccountsScreen extends ConsumerStatefulWidget {
 class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   late Future<List<Json>> _future;
 
-  static const _accentFor = {
-    'cash': AppTheme.cIncome,
-    'bank': AppTheme.cDebtor,
+  static const _toneFor = {
+    'cash': ModuleTone.bills,
+    'bank': ModuleTone.savings,
   };
 
   @override
@@ -123,7 +124,10 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Cancel')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.cExpense),
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.colors.negative,
+              foregroundColor: ctx.colors.surface,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete'),
           ),
@@ -138,10 +142,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Accounts'),
-        backgroundColor: AppTheme.cDebtor,
-      ),
+      appBar: AppBar(title: const Text('Accounts')),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<List<Json>>(
@@ -153,78 +154,91 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
             final accounts = snap.data ?? [];
             final total = accounts.fold<double>(
                 0, (a, r) => a + ((r['balance'] as num?)?.toDouble() ?? 0));
+            final c = context.colors;
             return ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(
+                  AppTheme.screenPad, 8, AppTheme.screenPad, 24),
               children: [
-                _TotalCard(total: total),
-                const SizedBox(height: 12),
-                Row(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => _edit(initialType: 'bank'),
-                        icon: const Icon(Icons.account_balance),
-                        label: const Text('Add Bank'),
-                        style: FilledButton.styleFrom(
-                            backgroundColor: AppTheme.cDebtor),
-                      ),
+                    Text(
+                      'Total across ${accounts.length} '
+                      '${accounts.length == 1 ? 'account' : 'accounts'}',
+                      style: context.text.labelMedium
+                          ?.copyWith(color: c.textSecondary),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _edit(initialType: 'cash'),
-                        icon: const Icon(Icons.payments),
-                        label: const Text('Add Cash'),
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: AppTheme.cIncome),
-                      ),
-                    ),
+                    const SizedBox(height: 2),
+                    MoneyText(money(total),
+                        style: context.text.displayLarge),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 20),
                 if (accounts.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 60),
-                    child: Center(child: Text('No accounts yet')),
+                  const EmptyState(
+                    title: 'No accounts yet',
+                    message:
+                        'Add a bank or cash account to start tracking balances.',
                   ),
                 ...accounts.map((a) {
                   final type = (a['type'] ?? 'cash').toString();
-                  final color = _accentFor[type] ?? AppTheme.primary;
+                  final tone = _toneFor[type] ?? ModuleTone.savings;
                   final bal = (a['balance'] as num?)?.toDouble() ?? 0;
-                  return Card(
-                    child: ListTile(
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(
-                          type == 'bank'
-                              ? Icons.account_balance
-                              : Icons.payments,
-                          color: color,
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(a['name'].toString()),
-                      subtitle: Text(type),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: AppCard(
+                      padding: const EdgeInsets.all(16),
+                      onTap: () => _edit(existing: a),
+                      child: Row(
                         children: [
-                          Text(money(bal),
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: bal < 0 ? AppTheme.cExpense : null)),
+                          IconChip(
+                            type == 'bank'
+                                ? Icons.account_balance
+                                : Icons.payments_outlined,
+                            tone,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(a['name'].toString(),
+                                    style: context.text.titleMedium,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                const SizedBox(height: 2),
+                                Text(type,
+                                    style: context.text.bodySmall
+                                        ?.copyWith(color: c.textSecondary)),
+                              ],
+                            ),
+                          ),
+                          MoneyText(money(bal),
+                              color: bal < 0 ? c.negative : null),
                           PopupMenuButton<String>(
-                            icon: const Icon(Icons.more_vert),
+                            icon: Icon(Icons.more_vert,
+                                size: 18, color: c.textSecondary),
+                            padding: EdgeInsets.zero,
+                            color: c.surface,
+                            shape: RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.circular(AppTheme.rControl),
+                              side: BorderSide(color: c.border),
+                            ),
                             onSelected: (v) =>
                                 v == 'edit' ? _edit(existing: a) : _delete(a),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('Edit')),
+                            itemBuilder: (_) => [
                               PopupMenuItem(
-                                  value: 'delete', child: Text('Delete')),
+                                  value: 'edit',
+                                  height: 44,
+                                  child: Text('Edit',
+                                      style: context.text.bodyMedium)),
+                              PopupMenuItem(
+                                  value: 'delete',
+                                  height: 44,
+                                  child: Text('Delete',
+                                      style: context.text.bodyMedium
+                                          ?.copyWith(color: c.negative))),
                             ],
                           ),
                         ],
@@ -232,44 +246,30 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                     ),
                   );
                 }),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _edit(initialType: 'bank'),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Add bank'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _edit(initialType: 'cash'),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Add cash'),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             );
           },
         ),
-      ),
-    );
-  }
-}
-
-class _TotalCard extends StatelessWidget {
-  const _TotalCard({required this.total});
-  final double total;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          colors: [AppTheme.primaryDark, AppTheme.accent],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Total balance',
-              style: TextStyle(color: Colors.white70, fontSize: 14)),
-          const SizedBox(height: 8),
-          Text(money(total),
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold)),
-        ],
       ),
     );
   }

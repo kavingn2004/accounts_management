@@ -21,9 +21,9 @@ class Bucket {
   double expense;
 }
 
-/// One slice of the expense pie chart.
-class PieSlice {
-  PieSlice(this.label, this.value);
+/// One row of the expense breakdown.
+class BreakdownSlice {
+  BreakdownSlice(this.label, this.value);
   final String label;
   final double value;
 }
@@ -95,23 +95,21 @@ List<Bucket> buildBuckets(Period p, List<Json> income, List<Json> expenses) {
   return buckets;
 }
 
-/// Expense totals grouped by payee within the period (top 5 + "Other").
-List<PieSlice> buildExpensePie(Period p, List<Json> expenses) {
+/// Expense totals grouped by payee within the period, largest first.
+///
+/// Every payee is returned — no "Other" catch-all. The dashboard shows the
+/// first few and lets the user expand to the full list, so rolling the tail
+/// into one opaque bucket would only hide detail the user can already ask for.
+List<BreakdownSlice> buildExpenseBreakdown(Period p, List<Json> expenses) {
   final now = DateTime.now();
   final totals = <String, double>{};
   for (final r in expenses) {
     final d = _parseDate(r['date']);
     if (d == null || !_inPeriod(d, p, now)) continue;
-    final key = (r['payee'] ?? 'Other').toString();
+    final key = (r['payee'] ?? 'Unlabelled').toString();
     totals[key] = (totals[key] ?? 0) + _amount(r);
   }
   final entries = totals.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
-
-  if (entries.length <= 6) {
-    return entries.map((e) => PieSlice(e.key, e.value)).toList();
-  }
-  final top = entries.take(5).map((e) => PieSlice(e.key, e.value)).toList();
-  final other = entries.skip(5).fold(0.0, (a, e) => a + e.value);
-  return [...top, PieSlice('Other', other)];
+  return entries.map((e) => BreakdownSlice(e.key, e.value)).toList();
 }

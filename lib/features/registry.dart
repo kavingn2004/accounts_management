@@ -35,7 +35,7 @@ class Modules {
     table: 'income',
     title: 'Income',
     icon: Icons.south_west,
-    color: AppTheme.cIncome,
+    tone: ModuleTone.income,
     orderBy: 'date',
     exportable: true,
     dateFiltered: true,
@@ -59,7 +59,7 @@ class Modules {
     table: 'expenses',
     title: 'Expenses',
     icon: Icons.north_east,
-    color: AppTheme.cExpense,
+    tone: ModuleTone.expense,
     orderBy: 'date',
     exportable: true,
     dateFiltered: true,
@@ -83,7 +83,7 @@ class Modules {
     table: 'savings_goals',
     title: 'Savings',
     icon: Icons.savings,
-    color: AppTheme.cSavings,
+    tone: ModuleTone.savings,
     fields: const [
       FieldSpec('name', 'Goal name', required: true),
       FieldSpec('target_amount', 'Target amount',
@@ -108,7 +108,7 @@ class Modules {
     table: 'investments',
     title: 'Investment',
     icon: Icons.trending_up,
-    color: AppTheme.cInvest,
+    tone: ModuleTone.invest,
     fields: const [
       FieldSpec('name', 'Name', required: true),
       FieldSpec('type', 'Type',
@@ -138,7 +138,7 @@ class Modules {
     table: 'debtors',
     title: 'Debtors',
     icon: Icons.person_add_alt,
-    color: AppTheme.cDebtor,
+    tone: ModuleTone.debtor,
     fields: const [
       FieldSpec('person_name', 'Person', required: true),
       FieldSpec('contact', 'Contact'),
@@ -165,7 +165,7 @@ class Modules {
     table: 'creditors',
     title: 'Creditors',
     icon: Icons.person_remove_alt_1,
-    color: AppTheme.cCreditor,
+    tone: ModuleTone.creditor,
     fields: const [
       FieldSpec('person_name', 'Person', required: true),
       FieldSpec('contact', 'Contact'),
@@ -191,7 +191,7 @@ class Modules {
     table: 'bills',
     title: 'Bill Payment',
     icon: Icons.receipt_long,
-    color: AppTheme.cBills,
+    tone: ModuleTone.bills,
     fields: const [
       FieldSpec('name', 'Bill name', required: true),
       FieldSpec('amount', 'Amount', type: FieldType.number, required: true),
@@ -210,7 +210,7 @@ class Modules {
     table: 'loans',
     title: 'Loan',
     icon: Icons.request_quote,
-    color: AppTheme.cLoan,
+    tone: ModuleTone.loan,
     fields: const [
       FieldSpec('lender', 'Lender / Bank', required: true),
       FieldSpec('principal', 'Principal amount',
@@ -237,7 +237,7 @@ class Modules {
     table: 'transfers',
     title: 'Transfers',
     icon: Icons.swap_horiz,
-    color: AppTheme.cDebtor,
+    tone: ModuleTone.debtor,
     orderBy: 'date',
     fields: const [
       FieldSpec('from', 'From account',

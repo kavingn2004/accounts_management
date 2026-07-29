@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme.dart';
 import '../alerts/alert_providers.dart';
 import '../alerts/alerts_screen.dart';
 import '../dashboard/dashboard_screen.dart';
@@ -33,11 +32,7 @@ class HomeShell extends ConsumerWidget {
           ),
           IconButton(
             tooltip: 'Profile',
-            icon: const CircleAvatar(
-              radius: 14,
-              backgroundColor: Colors.white,
-              child: Icon(Icons.person, size: 18, color: AppTheme.primary),
-            ),
+            icon: const Icon(Icons.person_outline),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const ProfileScreen()),
             ),

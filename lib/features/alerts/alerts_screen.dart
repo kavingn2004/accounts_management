@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/components.dart';
 import '../../core/theme.dart';
 import '../../services/providers.dart';
 import 'alert_model.dart';
@@ -54,7 +55,6 @@ class AlertsScreen extends ConsumerWidget {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.cAlerts),
               onPressed: () async {
                 if (titleC.text.trim().isEmpty) return;
                 await ref.read(repoProvider).insert('alerts', {
@@ -91,40 +91,41 @@ class AlertsScreen extends ConsumerWidget {
     });
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Alerts'),
-        backgroundColor: AppTheme.cAlerts,
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppTheme.cAlerts,
-        onPressed: () => _addAlert(context, ref),
-        child: const Icon(Icons.add),
+      appBar: AppBar(title: const Text('Alerts')),
+      floatingActionButton: SizedBox(
+        width: 52,
+        height: 52,
+        child: FloatingActionButton(
+          onPressed: () => _addAlert(context, ref),
+          child: const Icon(Icons.add, size: 22),
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: () async => ref.invalidate(alertsProvider),
         child: async.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => ListView(children: [
-            const SizedBox(height: 80),
-            Center(child: Text('Error: $e')),
-          ]),
+          error: (e, _) => ListView(
+            padding: const EdgeInsets.fromLTRB(
+                AppTheme.screenPad, 80, AppTheme.screenPad, 0),
+            children: [EmptyState(title: "That didn't load", message: '$e')],
+          ),
           data: (alerts) {
             if (alerts.isEmpty) {
               return ListView(
-                children: [
-                  const SizedBox(height: 120),
-                  Icon(Icons.check_circle_outline,
-                      size: 56, color: Colors.grey.shade400),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: Text("You're all caught up 🎉",
-                        style: TextStyle(color: Colors.grey.shade600)),
+                padding: const EdgeInsets.fromLTRB(
+                    AppTheme.screenPad, 80, AppTheme.screenPad, 0),
+                children: const [
+                  EmptyState(
+                    title: "You're all caught up",
+                    message:
+                        'Alerts clear themselves once the entry is recorded.',
                   ),
                 ],
               );
             }
             return ListView.builder(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(
+                  AppTheme.screenPad, 8, AppTheme.screenPad, 96),
               itemCount: alerts.length,
               itemBuilder: (_, i) {
                 final a = alerts[i];
@@ -159,60 +160,60 @@ class _AlertCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = alert.severity.color;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
+    final c = context.colors;
+    final sev = alert.severity.color(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: AppCard(
+        padding: const EdgeInsets.all(16),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: c.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(alert.severity.icon, color: c, size: 22),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(alert.title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15)),
-                  if (alert.message.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(alert.message,
-                        style: TextStyle(color: Colors.grey.shade700)),
-                  ],
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(Icons.schedule,
-                          size: 12, color: Colors.grey.shade500),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatTriggeredAt(alert.triggeredAt),
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration:
+                      BoxDecoration(color: sev, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    alert.title,
+                    style: context.text.titleSmall,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
+                ),
+                if (onDelete != null)
+                  InkWell(
+                    onTap: onDelete,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(Icons.close,
+                          size: 16, color: c.textSecondary),
+                    ),
+                  ),
+              ],
+            ),
+            if (alert.message.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                alert.message,
+                style:
+                    context.text.bodySmall?.copyWith(color: c.textSecondary),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              _formatTriggeredAt(alert.triggeredAt),
+              style: context.text.labelSmall?.copyWith(
+                color: c.textSecondary,
+                fontFeatures: tabular,
               ),
             ),
-            if (onDelete != null)
-              IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                color: Colors.grey,
-                onPressed: onDelete,
-              ),
           ],
         ),
       ),

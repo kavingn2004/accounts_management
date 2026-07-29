@@ -5,10 +5,12 @@ import '../../core/theme.dart';
 enum AlertSeverity { critical, warning, info }
 
 extension AlertSeverityX on AlertSeverity {
-  Color get color => switch (this) {
-        AlertSeverity.critical => AppTheme.cExpense,
-        AlertSeverity.warning => AppTheme.cBills,
-        AlertSeverity.info => AppTheme.primary,
+  /// Severity is one of the few places colour still carries meaning, so it
+  /// resolves per-brightness like the module tones do.
+  Color color(BuildContext context) => switch (this) {
+        AlertSeverity.critical => context.colors.negative,
+        AlertSeverity.warning => ModuleTone.bills.of(context),
+        AlertSeverity.info => ModuleTone.alerts.of(context),
       };
 
   IconData get icon => switch (this) {

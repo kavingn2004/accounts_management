@@ -39,16 +39,35 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Bundled as static TTFs (not google_fonts) so the app renders offline and
+  # never fetches a typeface at first paint.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+    - family: SourceSerif4
+      fonts:
+        - asset: assets/fonts/SourceSerif4-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/SourceSerif4-SemiBold.ttf
+          weight: 600
+
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
   image_path: "assets/icon/logo.png"
   remove_alpha_ios: true
-  background_color_ios: "#0D47A1"
-  adaptive_icon_background: "#0D47A1"
+  # Palette per design 1i — "ivory on clay". The old #0D47A1 blue is gone.
+  background_color_ios: "#B85536"
+  adaptive_icon_background: "#F5F1EB"
   adaptive_icon_foreground: "assets/icon/logo.png"
   web:
     generate: true
     image_path: "assets/icon/logo.png"
-    background_color: "#0D47A1"
-    theme_color: "#1565C0"
+    background_color: "#F5F1EB"
+    theme_color: "#B85536"

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/theme.dart';
 import '../data/finance_repository.dart';
 
 enum FieldType { text, number, date, select }
@@ -33,7 +34,7 @@ class EntityConfig {
     required this.table,
     required this.title,
     required this.icon,
-    required this.color,
+    required this.tone,
     required this.fields,
     required this.titleOf,
     this.subtitleOf,
@@ -64,7 +65,10 @@ class EntityConfig {
   final String table;
   final String title;
   final IconData icon;
-  final Color color;
+
+  /// Category accent. Resolved per-brightness at paint time and used only to
+  /// tint this module's 32px icon chip — never a card fill or a figure.
+  final ModuleTone tone;
   final List<FieldSpec> fields;
   final String Function(Json) titleOf;
   final String Function(Json)? subtitleOf;

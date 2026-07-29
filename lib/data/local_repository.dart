@@ -84,6 +84,17 @@ class LocalRepository extends FinanceRepository {
       return '${dt.year}-$m-$d';
     }
 
+    /// A date guaranteed to fall inside the *current* calendar month, on or
+    /// before today. `days()` alone can't promise that — seed the app on the
+    /// 2nd and half its rows land in the previous month, leaving the default
+    /// Month view looking empty.
+    String thisMonth(int day) {
+      final now = DateTime.now();
+      final d = day.clamp(1, now.day);
+      final m = now.month.toString().padLeft(2, '0');
+      return '${now.year}-$m-${d.toString().padLeft(2, '0')}';
+    }
+
     await _store.write('accounts', [
       {'id': _id(), 'name': 'Cash', 'type': 'cash', 'opening_balance': 5000},
       {'id': _id(), 'name': 'HDFC Bank', 'type': 'bank', 'opening_balance': 50000},
@@ -95,18 +106,31 @@ class LocalRepository extends FinanceRepository {
       {'id': _id(), 'source': 'Salary', 'amount': 65000, 'date': days(21), 'account': 'HDFC Bank', 'note': 'Monthly pay'},
       {'id': _id(), 'source': 'Freelance', 'amount': 12000, 'date': days(4), 'account': 'HDFC Bank', 'note': 'Logo design'},
       {'id': _id(), 'source': 'Bonus', 'amount': 8000, 'date': days(95), 'account': 'HDFC Bank', 'note': 'Quarterly'},
+      {'id': _id(), 'source': 'Rent received', 'amount': 15000, 'date': thisMonth(3), 'account': 'HDFC Bank', 'note': 'Tenant — 2BHK'},
+      {'id': _id(), 'source': 'Dividends', 'amount': 3400, 'date': thisMonth(11), 'account': 'HDFC Bank', 'note': 'Nifty 50 payout'},
+      {'id': _id(), 'source': 'Interest', 'amount': 1250, 'date': thisMonth(20), 'account': 'HDFC Bank', 'note': 'Savings interest'},
     ]);
+    // Enough distinct payees inside the current month that the dashboard's
+    // expense breakdown fills its five rows and offers "See more".
     await _store.write('expenses', [
-      {'id': _id(), 'payee': 'Groceries', 'amount': 4800, 'date': days(2), 'account': 'Cash', 'note': 'BigBasket'},
-      {'id': _id(), 'payee': 'Dining', 'amount': 1500, 'date': days(1), 'account': 'Cash', 'note': 'Dinner out'},
-      {'id': _id(), 'payee': 'Electricity', 'amount': 1900, 'date': days(3), 'account': 'HDFC Bank', 'note': 'Monthly bill'},
-      {'id': _id(), 'payee': 'Fuel', 'amount': 3000, 'date': days(6), 'account': 'Cash', 'note': ''},
+      {'id': _id(), 'payee': 'Rent', 'amount': 18000, 'date': thisMonth(1), 'account': 'HDFC Bank', 'note': 'Landlord'},
+      {'id': _id(), 'payee': 'School fees', 'amount': 12500, 'date': thisMonth(8), 'account': 'HDFC Bank', 'note': 'Term 2'},
+      {'id': _id(), 'payee': 'Groceries', 'amount': 4800, 'date': thisMonth(2), 'account': 'Cash', 'note': 'BigBasket'},
+      {'id': _id(), 'payee': 'Fuel', 'amount': 3000, 'date': thisMonth(6), 'account': 'Cash', 'note': ''},
+      {'id': _id(), 'payee': 'Electricity', 'amount': 1900, 'date': thisMonth(5), 'account': 'HDFC Bank', 'note': 'Monthly bill'},
+      {'id': _id(), 'payee': 'Dining', 'amount': 1500, 'date': thisMonth(14), 'account': 'Cash', 'note': 'Dinner out'},
+      {'id': _id(), 'payee': 'Medicines', 'amount': 1450.75, 'date': thisMonth(9), 'account': 'Cash', 'note': 'Pharmacy'},
+      {'id': _id(), 'payee': 'Internet', 'amount': 1199, 'date': thisMonth(12), 'account': 'HDFC Bank', 'note': 'Fibre plan'},
+      {'id': _id(), 'payee': 'Phone recharge', 'amount': 799, 'date': thisMonth(16), 'account': 'Cash', 'note': ''},
+      {'id': _id(), 'payee': 'Gym', 'amount': 700, 'date': thisMonth(4), 'account': 'Cash', 'note': 'Monthly'},
+      // Older rows so the Year and All ranges differ from Month.
       {'id': _id(), 'payee': 'Shopping', 'amount': 6000, 'date': days(40), 'account': 'HDFC Bank', 'note': 'Clothes'},
       {'id': _id(), 'payee': 'Insurance', 'amount': 2500, 'date': days(120), 'account': 'HDFC Bank', 'note': 'Premium'},
     ]);
     await _store.write('savings_goals', [
       {'id': _id(), 'name': 'Emergency fund', 'target_amount': 200000, 'saved_amount': 120000, 'target_date': '2026-12-31'},
       {'id': _id(), 'name': 'New laptop', 'target_amount': 90000, 'saved_amount': 30000, 'target_date': '2026-09-30'},
+      {'id': _id(), 'name': 'Trip to Japan', 'target_amount': 350000, 'saved_amount': 42000, 'target_date': '2027-04-30'},
     ]);
     await _store.write('investments', [
       {'id': _id(), 'name': 'Nifty 50 Index', 'type': 'fund', 'invested_amount': 50000, 'current_value': 58200},
@@ -114,13 +138,18 @@ class LocalRepository extends FinanceRepository {
     ]);
     await _store.write('debtors', [
       {'id': _id(), 'person_name': 'Ravi', 'contact': '98xxxxxx01', 'amount': 5000, 'due_date': days(-2), 'status': 'open', 'note': 'Lunch + cab'},
+      {'id': _id(), 'person_name': 'Meera', 'contact': '98xxxxxx03', 'amount': 12000, 'original_amount': 20000, 'due_date': days(-9), 'status': 'partial', 'note': 'Bike repair loan'},
+      {'id': _id(), 'person_name': 'Suresh', 'contact': '98xxxxxx04', 'amount': 0, 'original_amount': 3500, 'due_date': days(12), 'status': 'settled', 'settled_account': 'Cash', 'note': 'Paid back in full'},
     ]);
     await _store.write('creditors', [
       {'id': _id(), 'person_name': 'Anita', 'contact': '98xxxxxx02', 'amount': 8000, 'due_date': days(-4), 'status': 'partial', 'note': 'Borrowed for trip'},
+      {'id': _id(), 'person_name': 'Karthik', 'contact': '98xxxxxx05', 'amount': 25000, 'original_amount': 25000, 'due_date': days(-21), 'status': 'open', 'note': 'Laptop advance'},
     ]);
     await _store.write('bills', [
       {'id': _id(), 'name': 'Internet', 'amount': 1200, 'due_day': 5, 'frequency': 'monthly', 'status': 'paid'},
       {'id': _id(), 'name': 'Rent', 'amount': 18000, 'due_day': 1, 'frequency': 'monthly', 'status': 'due'},
+      {'id': _id(), 'name': 'Mobile postpaid', 'amount': 799, 'due_day': 18, 'frequency': 'monthly', 'status': 'due'},
+      {'id': _id(), 'name': 'Car insurance', 'amount': 14500, 'due_day': 22, 'frequency': 'yearly', 'status': 'due'},
     ]);
     await _store.write('loans', [
       {'id': _id(), 'lender': 'HDFC Bank', 'principal': 500000, 'outstanding': 320000, 'interest_rate': 9.5, 'emi': 11000, 'start_date': days(700), 'status': 'active', 'note': 'Car loan'},

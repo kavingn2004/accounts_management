@@ -75,7 +75,12 @@ class E2E {
       WidgetTester tester, String title) async {
     tester.firstState<ScaffoldState>(find.byType(Scaffold)).openDrawer();
     await tester.pumpAndSettle();
-    final item = find.widgetWithText(ListTile, title);
+    // The drawer rows are custom widgets (not ListTile) since the redesign,
+    // so match on the label inside the Drawer subtree.
+    final item = find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text(title),
+    );
     final drawerScroll = find
         .descendant(of: find.byType(Drawer), matching: find.byType(Scrollable))
         .first;

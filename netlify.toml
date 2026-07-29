@@ -28,8 +28,10 @@
   '''
 
 [build.environment]
-  # Pin to the same stable Flutter the project is developed against.
-  FLUTTER_VERSION = "3.44.0"
+  # Pin to the same stable Flutter the project is developed against. Keep this
+  # equal to the local SDK (`flutter --version`) — the app is only ever tested
+  # against that one, and a CI-only version skew is a miserable thing to debug.
+  FLUTTER_VERSION = "3.44.8"
 
 # SPA fallback: every path serves the Flutter app shell. This is also provided
 # by web/_redirects (copied into build/web); declared here too for visibility.

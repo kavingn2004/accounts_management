@@ -62,6 +62,113 @@ movement is invented for them.
 
 ## 3. Architecture
 
+### Component map
+
+New components are marked `*`; everything else already exists and is unchanged
+except where §3 "Changed files" says otherwise.
+
+```mermaid
+graph TD
+    subgraph UI["features/"]
+        ES["entity_screen.dart<br/>Investment list"]
+        SS["*sip_screen.dart<br/>SIP detail"]
+        DS["dashboard_screen.dart"]
+    end
+
+    subgraph SVC["services/"]
+        SIP["*sip_service.dart<br/>orchestration"]
+    end
+
+    subgraph DATA["data/"]
+        MATH["*sip_math.dart<br/>pure functions"]
+        CACHE["*nav_cache.dart"]
+        API["*nav_api.dart"]
+        REPO["finance_repository.dart<br/>(interface)"]
+        FM["finance_math.dart<br/>net worth"]
+    end
+
+    subgraph STORE["storage"]
+        LS["local_store.dart<br/>tbl_* + nav_*"]
+        SB["supabase_repository.dart"]
+    end
+
+    EXT(["api.mfapi.in<br/>AMFI NAV, CORS open"])
+
+    ES --> SS
+    ES --> SIP
+    SS --> SIP
+    SIP --> MATH
+    SIP --> CACHE
+    SIP --> REPO
+    CACHE --> API
+    CACHE --> LS
+    API --> EXT
+    REPO --> LS
+    REPO --> SB
+    DS --> FM
+    FM -.->|reads current_value<br/>+ total_invested| REPO
+
+    style SS fill:#B85536,color:#fff
+    style SIP fill:#B85536,color:#fff
+    style MATH fill:#B85536,color:#fff
+    style CACHE fill:#B85536,color:#fff
+    style API fill:#B85536,color:#fff
+```
+
+The dependency direction is one-way: UI → service → (math, cache, repo). The
+math layer depends on nothing, the cache knows nothing about investments, and
+`finance_math.dart` never learns that SIPs exist — it just keeps reading
+`current_value` off the rows.
+
+### Refresh dataflow
+
+What happens when the Investment screen loads, once per day per scheme:
+
+```mermaid
+sequenceDiagram
+    participant UI as Investment screen
+    participant S as sip_service
+    participant C as nav_cache
+    participant A as api.mfapi.in
+    participant M as sip_math
+    participant R as repository
+
+    UI->>S: refreshAll()
+    S->>R: list('investments') → SIP rows
+    S->>R: list('sip_installments')
+
+    loop per SIP scheme
+        S->>C: series(schemeCode)
+        alt fetched today
+            C-->>S: cached NavSeries
+        else stale or absent
+            C->>A: GET /mf/{code}
+            alt success
+                A-->>C: full NAV history
+                C-->>S: fresh NavSeries (cache written)
+            else network error
+                C-->>S: stale NavSeries + isStale
+            end
+        end
+
+        S->>M: dueInstallments(row, existing, today)
+        M-->>S: newly due dates
+        S->>M: resolveAllotment(date, series) — walk forward
+        M-->>S: nav, units
+        S->>R: insert sip_installments (unconfirmed if ≥ cash_from)
+
+        S->>M: value(installments, series) — walk backward
+        M-->>S: units, current_value, total_invested, nav_date
+        S->>R: update investments row
+    end
+
+    S-->>UI: rows + stale flags + due-installment count
+    Note over UI: dataRevisionProvider bumps → dashboard reloads
+```
+
+Cash movements are deliberately absent from this loop — they are written only
+on explicit user confirmation of a due installment (§5.5), never by a refresh.
+
 ### Integration insight
 
 `FinanceMath.dashboard()` derives net worth from each investment row's

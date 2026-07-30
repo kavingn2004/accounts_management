@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/components.dart';
+import '../../core/supabase_config.dart';
 import '../../core/theme.dart';
 import '../../services/providers.dart';
 import '../accounts/accounts_screen.dart';
@@ -25,6 +27,42 @@ class AppDrawer extends ConsumerWidget {
 
   void _lock(BuildContext context, WidgetRef ref) {
     Navigator.pop(context); // close drawer
+    ref.read(unlockedProvider.notifier).state = false;
+  }
+
+  /// Sign out of the cloud account. Only reachable in cloud mode — in on-device
+  /// mode there is no session to end.
+  Future<void> _signOut(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out?'),
+        content:
+            const Text('You will need to sign in again to access your data.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.colors.negative,
+              foregroundColor: ctx.colors.surface,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    // Close the drawer before ending the session, so the Scaffold it belongs to
+    // isn't torn down underneath an open route when AuthGate swaps in the login
+    // screen.
+    if (context.mounted) Navigator.pop(context);
+    await Supabase.instance.client.auth.signOut();
+    // Drop the in-app unlock too, otherwise the next sign-in walks straight
+    // past the PIN screen on this device.
     ref.read(unlockedProvider.notifier).state = false;
   }
 
@@ -95,11 +133,22 @@ class AppDrawer extends ConsumerWidget {
                   icon: Icons.lock_outline,
                   onTap: () => _lock(context, ref),
                 ),
+                if (SupabaseConfig.enabled)
+                  _PlainRow(
+                    label: 'Sign out',
+                    icon: Icons.logout,
+                    onTap: () => _signOut(context, ref),
+                  ),
                 const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'On-device • v0.1',
+                    // Says which backend the build is talking to — the reason a
+                    // deploy missing its Supabase env vars looks like "my data
+                    // vanished" is that nothing on screen distinguishes the two.
+                    SupabaseConfig.enabled
+                        ? 'Cloud sync • v0.1'
+                        : 'On-device • v0.1',
                     style: context.text.labelSmall
                         ?.copyWith(color: c.textSecondary),
                   ),

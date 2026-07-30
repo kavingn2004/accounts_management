@@ -11,6 +11,39 @@ import '../../models/field_spec.dart';
 import '../../services/providers.dart';
 import 'export_service.dart';
 
+/// The calendar day a row belongs to, or null when nothing parseable is there.
+///
+/// Timestamps are normalised to the local day before comparing: Postgres hands
+/// back `created_at` in UTC while the filter boundaries are local dates, so
+/// comparing them as raw instants would include or drop rows near midnight
+/// depending on the machine's timezone.
+DateTime? _rowDay(Object? value) {
+  final parsed = DateTime.tryParse((value ?? '').toString());
+  if (parsed == null) return null;
+  final local = parsed.isUtc ? parsed.toLocal() : parsed;
+  return DateTime(local.year, local.month, local.day);
+}
+
+/// Rows falling inside [range] (inclusive on both ends). A null range means
+/// "All" and returns every row untouched.
+///
+/// Rows are placed by their `date` field, falling back to `created_at` when
+/// `date` is absent or unparseable. When neither can be read the row is KEPT:
+/// a record that exists in the database must never be silently invisible in
+/// the UI, and the previous behaviour dropped such rows from every range
+/// except "All", which made stored data look like it had never saved.
+@visibleForTesting
+List<Json> filterRowsByDate(List<Json> rows, DateTimeRange? range) {
+  if (range == null) return rows;
+  final start = DateTime(range.start.year, range.start.month, range.start.day);
+  final end = DateTime(range.end.year, range.end.month, range.end.day);
+  return rows.where((r) {
+    final day = _rowDay(r['date']) ?? _rowDay(r['created_at']);
+    if (day == null) return true;
+    return !day.isBefore(start) && !day.isAfter(end);
+  }).toList();
+}
+
 /// Generic list + add screen driven entirely by an [EntityConfig].
 /// Used by every module (income, expenses, savings, ...).
 class EntityScreen extends ConsumerStatefulWidget {
@@ -64,19 +97,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
 
   /// Apply the date filter to a list of rows. Returns input unchanged when
   /// the config isn't date-filtered or "All" is selected.
-  List<Json> _applyFilter(List<Json> rows) {
-    if (!cfg.dateFiltered) return rows;
-    final range = _activeRange();
-    if (range == null) return rows;
-    final start = DateTime(range.start.year, range.start.month, range.start.day);
-    final end = DateTime(
-        range.end.year, range.end.month, range.end.day, 23, 59, 59);
-    return rows.where((r) {
-      final d = DateTime.tryParse((r['date'] ?? '').toString());
-      if (d == null) return false;
-      return !d.isBefore(start) && !d.isAfter(end);
-    }).toList();
-  }
+  List<Json> _applyFilter(List<Json> rows) =>
+      cfg.dateFiltered ? filterRowsByDate(rows, _activeRange()) : rows;
 
   Future<void> _pickCustomRange() async {
     final now = DateTime.now();

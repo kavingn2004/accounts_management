@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../data/finance_repository.dart';
+import 'dashboard_spec.dart';
 
 enum FieldType { text, number, date, select }
 
@@ -60,6 +61,7 @@ class EntityConfig {
     this.paymentsTable,
     this.exportable = false,
     this.dateFiltered = false,
+    this.dashboard,
   });
 
   final String table;
@@ -154,4 +156,16 @@ class EntityConfig {
   /// If true, the EntityScreen shows a date-range filter row (Today/Week/Month/
   /// Year/All/Custom). Filters and exports use the row's `date` field.
   final bool dateFiltered;
+
+  /// Dashboard header shown above the list: headline figures, a chart, and an
+  /// optional per-row breakdown. Null means no header.
+  ///
+  /// The range chips appear whenever this is set *or* [dateFiltered] is — but
+  /// they only filter the list when [dateFiltered] is true. Savings goals,
+  /// loans and bills carry no `date` column, so filtering their rows by range
+  /// would blank the page; on those modules the range moves the dashboard
+  /// alone. Stat labels carry the distinction: "Contributed" for an
+  /// event-derived figure that follows the range, plain "Saved" for a current
+  /// total that does not.
+  final DashboardSpec? dashboard;
 }

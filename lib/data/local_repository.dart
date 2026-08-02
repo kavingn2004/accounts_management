@@ -23,7 +23,15 @@ class LocalRepository extends FinanceRepository {
   @override
   Future<void> insert(String table, Json values) async {
     final rows = _store.read(table);
-    rows.insert(0, {...values, 'id': _id()});
+    // Stamp the creation time the way Supabase does. The dashboard's stock
+    // trends need it to tell a debt that existed at the start of the period
+    // from one taken on since; rows written before this stamp have none and
+    // are treated as pre-existing.
+    rows.insert(0, {
+      'created_at': DateTime.now().toIso8601String(),
+      ...values,
+      'id': _id(),
+    });
     await _store.write(table, rows);
   }
 
@@ -101,6 +109,9 @@ class LocalRepository extends FinanceRepository {
     ]);
     await _store.write('transfers', []);
     await _store.write('cash_moves', []);
+    // The per-row value ledger starts empty — seeded rows get no invented
+    // history, so their charts show "no history yet" until real edits land.
+    await _store.write('module_events', []);
 
     await _store.write('income', [
       {'id': _id(), 'source': 'Salary', 'amount': 65000, 'date': days(21), 'account': 'HDFC Bank', 'note': 'Monthly pay'},

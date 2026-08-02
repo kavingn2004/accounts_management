@@ -821,23 +821,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                   }
                   final allRows = snap.data ?? [];
                   final rows = _applyFilter(allRows);
-                  final range = _activeRange();
-                  return Column(
-                    children: [
-                      if (cfg.dashboard != null)
-                        FutureBuilder<List<Json>>(
-                          future: _events,
-                          builder: (context, evSnap) => ModuleDashboard(
-                            config: cfg,
-                            rows: rows,
-                            events: evSnap.data ?? const [],
-                            rangeStart: range?.start,
-                            rangeEnd: range?.end,
-                          ),
-                        ),
-                      Expanded(child: _buildList(rows, allRows)),
-                    ],
-                  );
+                  return _buildList(rows, allRows);
                 },
               ),
             ),
@@ -852,39 +836,66 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   /// dashboard alone — `_applyFilter` still returns the list untouched.
   bool get _showFilterBar => cfg.dateFiltered || cfg.dashboard != null;
 
-  /// The rows, or the empty state. Kept separate from [build] so the empty
-  /// state renders *below* the dashboard rather than replacing it: a module
-  /// with goals but nothing in range should still show its figures.
+  /// The dashboard header followed by the rows (or the empty state).
+  ///
+  /// All one scrollable, deliberately. A header pinned above an Expanded list
+  /// competes with it for a fixed screen: a four-stat dashboard with a chart
+  /// and a breakdown is taller than the remaining space on a small phone, and
+  /// the list gets squeezed to a few pixels. Scrolling it away is also what
+  /// makes the collapse control a convenience rather than a necessity.
   Widget _buildList(List<Json> rows, List<Json> allRows) {
+    final range = _activeRange();
+    final header = cfg.dashboard == null
+        ? null
+        : FutureBuilder<List<Json>>(
+            future: _events,
+            builder: (context, evSnap) => ModuleDashboard(
+              config: cfg,
+              rows: rows,
+              events: evSnap.data ?? const [],
+              rangeStart: range?.start,
+              rangeEnd: range?.end,
+            ),
+          );
+
     if (rows.isEmpty) {
       final inRange = allRows.isNotEmpty && cfg.dateFiltered;
       return ListView(
-        padding: const EdgeInsets.fromLTRB(
-            AppTheme.screenPad, 24, AppTheme.screenPad, 0),
+        padding: const EdgeInsets.only(bottom: 96),
         children: [
-          EmptyState(
-            title: inRange
-                ? 'Nothing in this range'
-                : 'No ${cfg.title.toLowerCase()} yet',
-            message: inRange
-                ? 'Widen the filter, or add an entry with the + button.'
-                : 'Tap + to record your first entry.',
+          if (header != null) header,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppTheme.screenPad, 24, AppTheme.screenPad, 0),
+            child: EmptyState(
+              title: inRange
+                  ? 'Nothing in this range'
+                  : 'No ${cfg.title.toLowerCase()} yet',
+              message: inRange
+                  ? 'Widen the filter, or add an entry with the + button.'
+                  : 'Tap + to record your first entry.',
+            ),
           ),
         ],
       );
     }
+
+    final headerCount = header == null ? 0 : 1;
     return ListView.builder(
-      padding: const EdgeInsets.only(
-        left: AppTheme.screenPad,
-        right: AppTheme.screenPad,
-        bottom: 96,
-      ),
-      itemCount: rows.length,
-      itemBuilder: (context, i) => _buildRow(
-        context,
-        rows[i],
-        isLast: i == rows.length - 1,
-      ),
+      padding: const EdgeInsets.only(bottom: 96),
+      itemCount: rows.length + headerCount,
+      itemBuilder: (context, i) {
+        if (header != null && i == 0) return header;
+        final index = i - headerCount;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppTheme.screenPad),
+          child: _buildRow(
+            context,
+            rows[index],
+            isLast: index == rows.length - 1,
+          ),
+        );
+      },
     );
   }
 

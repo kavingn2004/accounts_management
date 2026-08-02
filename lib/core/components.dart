@@ -122,6 +122,7 @@ class MetricTile extends StatelessWidget {
     required this.value,
     this.delta,
     this.deltaColor,
+    this.sub,
     this.onTap,
   });
 
@@ -129,8 +130,15 @@ class MetricTile extends StatelessWidget {
   final ModuleTone tone;
   final String label;
   final String value;
+
+  /// Movement line under the figure — e.g. '↑ 12.4% vs last month'. Coloured
+  /// by [deltaColor] when the movement is favourable or not.
   final String? delta;
   final Color? deltaColor;
+
+  /// Optional second line in secondary text, for the figure the delta is
+  /// measured against (e.g. 'invested ₹75,000' beneath a return percentage).
+  final String? sub;
   final VoidCallback? onTap;
 
   @override
@@ -163,6 +171,16 @@ class MetricTile extends StatelessWidget {
                 color: deltaColor ?? c.textSecondary,
                 fontFeatures: tabular,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (sub != null) ...[
+            const SizedBox(height: 1),
+            Text(
+              sub!,
+              style: context.text.labelSmall
+                  ?.copyWith(color: c.textSecondary, fontFeatures: tabular),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

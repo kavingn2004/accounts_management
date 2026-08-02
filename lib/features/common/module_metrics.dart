@@ -168,11 +168,16 @@ Stat _stat(
   DateTime? from,
   DateTime? to,
 ) {
-  double sum(String key) => rows.fold(0.0, (a, r) => a + _num(r, key));
+  /// Sum a column, falling back to [or] on rows that predate it.
+  double sum(String key, [String? or]) => rows.fold(0.0, (a, r) {
+        final v = r[key] as num?;
+        final f = or == null ? null : r[or] as num?;
+        return a + ((v ?? f)?.toDouble() ?? 0);
+      });
 
   switch (s.kind) {
     case StatKind.sum:
-      return Stat(s.label, money(sum(s.field!)));
+      return Stat(s.label, money(sum(s.field!, s.fallback)));
 
     case StatKind.outstanding:
       final total = rows
@@ -187,7 +192,7 @@ Stat _stat(
       return Stat(s.label, '${_pct(pct)}%');
 
     case StatKind.ratio:
-      final base = sum(s.against!);
+      final base = sum(s.against!, s.againstFallback);
       if (base <= 0) return Stat(s.label, '—');
       final pct = (sum(s.field!) - base) / base * 100;
       return Stat(s.label, '${pct >= 0 ? '+' : '−'}${_pct(pct.abs())}%');

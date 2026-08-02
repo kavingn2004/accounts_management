@@ -1,3 +1,4 @@
+import 'package:accounts_app/features/common/module_dashboard.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -54,5 +55,36 @@ void main() {
 
     // Savings goals carry no date column — the list must be unaffected.
     expect(t.widgetList(find.text('Emergency fund')).length, before);
+  });
+
+  testWidgets('every module page renders a dashboard header', (t) async {
+    await E2E.launch(t);
+    for (final page in [
+      'Income',
+      'Expenses',
+      'Savings',
+      'Investment',
+      'Debtors',
+      'Creditors',
+      'Bill Payment',
+      'Loan',
+      'Transfers',
+    ]) {
+      await E2E.openDrawerItem(t, page);
+      expect(find.byType(ModuleDashboard), findsOneWidget,
+          reason: '$page has no dashboard header');
+      // Module pages are pushed routes with no drawer of their own, so return
+      // to the shell before reaching for the drawer again.
+      await t.pageBack();
+      await t.pumpAndSettle();
+    }
+  });
+
+  testWidgets('investment shows return on capital', (t) async {
+    await E2E.launch(t);
+    await E2E.openDrawerItem(t, 'Investment');
+    // Seeded: invested 75000, current value 85300.
+    expect(find.text('Return'), findsOneWidget);
+    expect(find.text('+13.7%'), findsOneWidget);
   });
 }

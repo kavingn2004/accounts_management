@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/formatters.dart';
 import '../core/theme.dart';
 import '../data/finance_repository.dart';
+import '../data/module_event.dart';
 import '../models/dashboard_spec.dart';
 import '../models/field_spec.dart';
 
@@ -54,6 +55,13 @@ class Modules {
       if (r['account'] != null) r['account'].toString(),
     ].where((s) => s.isNotEmpty).join(' · '),
     trailingOf: (r) => money(r['amount'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.sum('amount', 'Total'),
+        StatSpec.count('Entries'),
+      ],
+      chart: ChartSpec.bars('amount', label: 'Income'),
+    ),
   );
 
   static final expenses = EntityConfig(
@@ -78,6 +86,13 @@ class Modules {
       if (r['account'] != null) r['account'].toString(),
     ].where((s) => s.isNotEmpty).join(' · '),
     trailingOf: (r) => money(r['amount'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.sum('amount', 'Total'),
+        StatSpec.count('Entries'),
+      ],
+      chart: ChartSpec.bars('amount', label: 'Spending'),
+    ),
   );
 
   static final savings = EntityConfig(
@@ -143,6 +158,26 @@ class Modules {
     subtitleOf: (r) => '${r['type'] ?? ''} · total invested '
         '${money((r['total_invested'] ?? r['invested_amount']) as num?)}',
     trailingOf: (r) => money(r['current_value'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        // Rows created before `total_invested` existed carry the same figure
+        // in `invested_amount` — the substitution FinanceMath.dashboard makes.
+        StatSpec.sum('total_invested', 'Invested',
+            fallback: 'invested_amount'),
+        StatSpec.sum('current_value', 'Current value'),
+        StatSpec.ratio('current_value', 'total_invested', 'Return',
+            againstFallback: 'invested_amount'),
+        StatSpec.eventSum('invested_amount', 'Added'),
+      ],
+      chart: ChartSpec.dualCumulative(
+        'invested_amount',
+        'current_value',
+        label: 'Invested vs value',
+        firstLabel: 'Invested',
+        secondLabel: 'Value',
+      ),
+      breakdown: BreakdownSpec.byRow(value: 'current_value'),
+    ),
   );
 
   static final debtors = EntityConfig(
@@ -170,6 +205,15 @@ class Modules {
     titleOf: (r) => (r['person_name'] ?? '').toString(),
     subtitleOf: _settlementSubtitle(received: true),
     trailingOf: (r) => money(r['amount'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.outstanding('amount', 'Outstanding'),
+        StatSpec.eventSum('amount', 'Received', kinds: [EventKind.decrement]),
+        StatSpec.count('People'),
+      ],
+      chart: ChartSpec.cumulative('amount', label: 'Owed to you'),
+      breakdown: BreakdownSpec.byRow(value: 'amount'),
+    ),
   );
 
   static final creditors = EntityConfig(
@@ -196,6 +240,15 @@ class Modules {
     titleOf: (r) => (r['person_name'] ?? '').toString(),
     subtitleOf: _settlementSubtitle(received: false),
     trailingOf: (r) => money(r['amount'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.outstanding('amount', 'Outstanding'),
+        StatSpec.eventSum('amount', 'Paid', kinds: [EventKind.decrement]),
+        StatSpec.count('People'),
+      ],
+      chart: ChartSpec.cumulative('amount', label: 'You owe'),
+      breakdown: BreakdownSpec.byRow(value: 'amount'),
+    ),
   );
 
   static final bills = EntityConfig(
@@ -215,6 +268,15 @@ class Modules {
     subtitleOf: (r) =>
         '${r['frequency'] ?? ''} · ${r['status'] ?? 'due'} · day ${r['due_day'] ?? '-'}',
     trailingOf: (r) => money(r['amount'] as num?),
+    // No chart: a bill is a recurring template, not a balance, so nothing
+    // about it moves over time. Figures and a breakdown are the honest maximum.
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.sum('amount', 'Commitment'),
+        StatSpec.count('Bills'),
+      ],
+      breakdown: BreakdownSpec.byRow(value: 'amount'),
+    ),
   );
 
   static final loans = EntityConfig(
@@ -242,6 +304,15 @@ class Modules {
     subtitleOf: (r) =>
         '${r['status'] ?? 'active'} · EMI ${money(r['emi'] as num?)}',
     trailingOf: (r) => money(r['outstanding'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.sum('outstanding', 'Outstanding'),
+        StatSpec.sum('emi', 'Monthly EMI'),
+        StatSpec.eventSum('outstanding', 'Paid', kinds: [EventKind.decrement]),
+      ],
+      chart: ChartSpec.cumulative('outstanding', label: 'Outstanding'),
+      breakdown: BreakdownSpec.byRow(value: 'outstanding', of: 'principal'),
+    ),
   );
 
   static final transfers = EntityConfig(
@@ -262,6 +333,13 @@ class Modules {
     titleOf: (r) => '${r['from'] ?? '?'} → ${r['to'] ?? '?'}',
     subtitleOf: (r) => prettyDate(r['date']?.toString()),
     trailingOf: (r) => money(r['amount'] as num?),
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.sum('amount', 'Moved'),
+        StatSpec.count('Transfers'),
+      ],
+      chart: ChartSpec.bars('amount', label: 'Transfers'),
+    ),
   );
 
   // Note: Alerts and Accounts are not generic CRUD modules — each has its own

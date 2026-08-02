@@ -31,10 +31,16 @@ class StatSpec {
     this.field,
     this.against,
     this.eventKinds,
+    this.fallback,
+    this.againstFallback,
   });
 
-  const StatSpec.sum(String field, String label)
-      : this._(StatKind.sum, label, field: field);
+  /// [fallback] is read when [field] is absent on a row — for columns added
+  /// after rows already existed, such as `total_invested`, whose predecessor
+  /// `invested_amount` held the same figure. `FinanceMath.dashboard` makes the
+  /// same substitution.
+  const StatSpec.sum(String field, String label, {String? fallback})
+      : this._(StatKind.sum, label, field: field, fallback: fallback);
 
   const StatSpec.outstanding(String field, String label)
       : this._(StatKind.outstanding, label, field: field);
@@ -42,8 +48,18 @@ class StatSpec {
   const StatSpec.progress(String field, String against, String label)
       : this._(StatKind.progress, label, field: field, against: against);
 
-  const StatSpec.ratio(String field, String against, String label)
-      : this._(StatKind.ratio, label, field: field, against: against);
+  const StatSpec.ratio(
+    String field,
+    String against,
+    String label, {
+    String? againstFallback,
+  }) : this._(
+          StatKind.ratio,
+          label,
+          field: field,
+          against: against,
+          againstFallback: againstFallback,
+        );
 
   const StatSpec.eventSum(
     String field,
@@ -58,6 +74,12 @@ class StatSpec {
   final String? field;
   final String? against;
   final List<EventKind>? eventKinds;
+
+  /// Column read when [field] is absent on a row.
+  final String? fallback;
+
+  /// Column read when [against] is absent on a row.
+  final String? againstFallback;
 }
 
 /// The shape a module's chart takes.

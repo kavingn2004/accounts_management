@@ -17,8 +17,10 @@ void main() {
     await E2E.launch(tester);
     await E2E.openDrawerItem(tester, 'Investment');
 
-    expect(find.text('Nifty 50 Index'), findsOneWidget);
-    expect(find.text('Gold ETF'), findsOneWidget);
+    // Each holding appears in the list row and again as a dashboard
+    // breakdown bar, so assert presence rather than uniqueness.
+    expect(find.text('Nifty 50 Index'), findsWidgets);
+    expect(find.text('Gold ETF'), findsWidgets);
     // Each row subtitle reports the running total invested.
     expect(find.textContaining('total invested'), findsWidgets);
   });
@@ -67,7 +69,8 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Save investment'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Test SIP'), findsOneWidget);
+    // List row + dashboard breakdown bar.
+    expect(find.text('Test SIP'), findsWidgets);
 
     // Persisted: total_invested seeded from invested; cash deducted by 30000.
     final store = E2E.lastStore!;
@@ -83,6 +86,12 @@ void main() {
       isTrue,
       reason: 'invested amount should be recorded as money out of Cash',
     );
+
+    // The dashboard header scrolls with the list, so scroll past it — the
+    // rows would otherwise sit low enough for the FAB to cover their
+    // overflow buttons.
+    await tester.drag(find.byType(ListView).last, const Offset(0, -260));
+    await tester.pumpAndSettle();
 
     // The new row is inserted at the top, so it is the first row.
     // --- Update its current value (overwrite). ---
@@ -102,6 +111,9 @@ void main() {
     );
 
     // --- Add to the investment (grows invested, total, and current value). ---
+    // The refresh above rebuilt the list, resetting its scroll offset.
+    await tester.drag(find.byType(ListView).last, const Offset(0, -260));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.more_vert).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Add investment'));

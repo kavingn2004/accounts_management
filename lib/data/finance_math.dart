@@ -82,8 +82,18 @@ class FinanceMath {
 
     final accountsTotal = balances.values.fold(0.0, (a, b) => a + b);
     final investmentsTotal = sum(investments, 'current_value');
-    final investedTotal = sum(investments, 'invested_amount');
+    // `total_invested` is the running sum of every contribution (see the
+    // investment module's cumulativeIncrementField). Rows created before that
+    // column existed fall back to `invested_amount`, which held the same figure.
+    final investedTotal = investments.fold(
+        0.0,
+        (a, r) =>
+            a +
+            (((r['total_invested'] ?? r['invested_amount']) as num?)
+                    ?.toDouble() ??
+                0));
     final savings = sum(savingsGoals, 'saved_amount');
+    final savingsTarget = sum(savingsGoals, 'target_amount');
     final receivable = sumOwed(debtors);
     final payable = sumOwed(creditors);
     final billsTotal = sum(bills, 'amount');
@@ -103,8 +113,10 @@ class FinanceMath {
       'debt_worth': receivable, // owed to you (debtors / collections)
       'credit_worth': payable + billsTotal, // you owe (creditors + bills)
       'saving_worth': savings, // savings goals set aside
+      'saving_target': savingsTarget, // combined goal targets
       'investment_worth': investmentsTotal, // current value of holdings
       'invested_total': investedTotal, // total amount put in
+      'bills_total': billsTotal, // recurring bills folded into credit_worth
       'month_income': sum(income, 'amount'),
       'month_expense': sum(expenses, 'amount'),
     };

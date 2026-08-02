@@ -11,10 +11,12 @@ import '../../services/providers.dart';
 import '../common/entity_screen.dart';
 import '../registry.dart';
 import 'analytics.dart';
+import 'trends.dart';
 
 /// Analytics dashboard: net-worth card, a grid of module metrics, and charts.
-/// The period filter lives in the chart header — it only ever affected the
-/// chart and the two period totals, so putting it there says so.
+/// The period filter sits above the metric grid because it now drives the
+/// whole screen — the four period-sensitive tiles and their trend indicators
+/// as well as the chart below.
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
@@ -23,11 +25,25 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardData {
-  _DashboardData(this.summary, this.income, this.expenses, this.accounts);
+  _DashboardData(
+    this.summary,
+    this.income,
+    this.expenses,
+    this.accounts,
+    this.debtors,
+    this.creditors,
+    this.payments,
+  );
   final Json? summary;
   final List<Json> income;
   final List<Json> expenses;
   final List<Json> accounts;
+
+  /// Raw settle-able rows plus the instalment ledger, which together let the
+  /// debtor/creditor balances be rebuilt as they stood at the period's start.
+  final List<Json> debtors;
+  final List<Json> creditors;
+  final List<Json> payments;
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
@@ -59,7 +75,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final income = await repo.list('income');
     final expenses = await repo.list('expenses');
     final accounts = await repo.accountsWithBalances();
-    return _DashboardData(summary, income, expenses, accounts);
+    final debtors = await repo.list('debtors');
+    final creditors = await repo.list('creditors');
+    // The instalment ledger is optional — a project that hasn't run the
+    // debt_payments migration must still get a dashboard. Without it the
+    // debtor/creditor tiles simply report no movement.
+    List<Json> payments;
+    try {
+      payments = await repo.list('debt_payments');
+    } catch (_) {
+      payments = const [];
+    }
+    return _DashboardData(
+        summary, income, expenses, accounts, debtors, creditors, payments);
   }
 
   Future<void> _refresh() async {
@@ -99,6 +127,39 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           final periodExpense = buckets.fold<double>(0, (a, b) => a + b.expense);
           final periodLabel = _period.label.toLowerCase();
 
+          // One clock reading for every indicator, so a tile computed either
+          // side of midnight can't disagree with its neighbour.
+          final now = DateTime.now();
+          double num_(String key) => (d?[key] as num?)?.toDouble() ?? 0;
+
+          // Income and expenses are flows: this window against the last one.
+          final incomeTrend = flowTrend(_period, data?.income ?? const [],
+              goodWhenUp: true, now: now);
+          final expenseTrend = flowTrend(_period, data?.expenses ?? const [],
+              goodWhenUp: false, now: now);
+
+          // Debtors and creditors are balances: now against the period's
+          // start. The ledger covers both tables and is keyed by parent row id,
+          // which is unique across them, so each side reads the whole thing.
+          final payments = data?.payments ?? const <Json>[];
+          final debtorTrend = stockTrend(
+              _period, data?.debtors ?? const [], payments,
+              goodWhenUp: true, now: now);
+          final creditorTrend = stockTrend(
+              _period, data?.creditors ?? const [], payments,
+              goodWhenUp: false,
+              now: now,
+              // credit_worth folds in recurring bills, which are templates
+              // rather than balances and so have no history to rebuild.
+              constantBase: num_('bills_total'));
+
+          // Investments and savings store no history — their figures are
+          // overwritten in place. Each reports what its data does support.
+          final investTrend =
+              returnTrend(num_('investment_worth'), num_('invested_total'));
+          final savingTrend =
+              progressTrend(num_('saving_worth'), num_('saving_target'));
+
           return ListView(
             padding: const EdgeInsets.fromLTRB(
                 AppTheme.screenPad, 0, AppTheme.screenPad, 96),
@@ -107,13 +168,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 netWorth: money(d?['net_worth'] as num?),
                 currentWorth: money(d?['current_worth'] as num?),
               ),
-              const SizedBox(height: 10),
+              _SectionHeader(
+                title: 'Overview',
+                trailing: _PeriodPill(
+                  period: _period,
+                  onChanged: (p) => setState(() => _period = p),
+                ),
+              ),
               _MetricGrid(children: [
                 MetricTile(
                   icon: Icons.south_west,
                   tone: ModuleTone.income,
                   label: 'Income ($periodLabel)',
                   value: money(periodIncome),
+                  delta: incomeTrend?.label,
+                  deltaColor: _moodColor(context, incomeTrend),
                   onTap: () => _openModule(context, Modules.income),
                 ),
                 MetricTile(
@@ -121,6 +190,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   tone: ModuleTone.expense,
                   label: 'Expense ($periodLabel)',
                   value: money(periodExpense),
+                  delta: expenseTrend?.label,
+                  deltaColor: _moodColor(context, expenseTrend),
                   onTap: () => _openModule(context, Modules.expenses),
                 ),
                 MetricTile(
@@ -128,6 +199,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   tone: ModuleTone.savings,
                   label: 'Savings',
                   value: money(d?['saving_worth'] as num?),
+                  delta: savingTrend?.label,
+                  deltaColor: _moodColor(context, savingTrend),
+                  sub: savingTrend == null
+                      ? null
+                      : 'target ${money(d?['saving_target'] as num?)}',
                   onTap: () => _openModule(context, Modules.savings),
                 ),
                 MetricTile(
@@ -135,7 +211,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   tone: ModuleTone.invest,
                   label: 'Investment',
                   value: money(d?['investment_worth'] as num?),
-                  delta: 'invested ${money(d?['invested_total'] as num?)}',
+                  delta: investTrend?.label,
+                  deltaColor: _moodColor(context, investTrend),
+                  sub: 'invested ${money(d?['invested_total'] as num?)}',
                   onTap: () => _openModule(context, Modules.investment),
                 ),
                 MetricTile(
@@ -143,6 +221,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   tone: ModuleTone.debtor,
                   label: 'Debtors',
                   value: money(d?['debt_worth'] as num?),
+                  delta: debtorTrend?.label,
+                  deltaColor: _moodColor(context, debtorTrend),
                   onTap: () => _openModule(context, Modules.debtors),
                 ),
                 MetricTile(
@@ -150,6 +230,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   tone: ModuleTone.creditor,
                   label: 'Creditors',
                   value: money(d?['credit_worth'] as num?),
+                  delta: creditorTrend?.label,
+                  deltaColor: _moodColor(context, creditorTrend),
                   onTap: () => _openModule(context, Modules.creditors),
                 ),
               ]),
@@ -160,10 +242,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               const SizedBox(height: 10),
               _ChartCard(
                 title: 'Income vs expense',
-                trailing: _PeriodPill(
-                  period: _period,
-                  onChanged: (p) => setState(() => _period = p),
-                ),
                 child: _BarChart(buckets: buckets),
               ),
               const SizedBox(height: 10),
@@ -175,6 +253,35 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Colour for a trend line: favourable green, unfavourable red, and nothing
+/// for a flat or unknown movement (the tile falls back to secondary text).
+Color? _moodColor(BuildContext context, Trend? t) => switch (t?.mood) {
+      TrendMood.good => context.colors.positive,
+      TrendMood.bad => context.colors.negative,
+      _ => null,
+    };
+
+/// Row heading above a section of the dashboard, matching the card titles
+/// below it. Carries the period pill for the metric grid.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, this.trailing});
+  final String title;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 16, 2, 8),
+      child: Row(
+        children: [
+          Expanded(child: Text(title, style: context.text.titleMedium)),
+          if (trailing != null) trailing!,
+        ],
       ),
     );
   }
@@ -313,10 +420,9 @@ class _PeriodPill extends StatelessWidget {
 }
 
 class _ChartCard extends StatelessWidget {
-  const _ChartCard({required this.title, required this.child, this.trailing});
+  const _ChartCard({required this.title, required this.child});
   final String title;
   final Widget child;
-  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -324,13 +430,7 @@ class _ChartCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(child: Text(title, style: context.text.titleMedium)),
-              if (trailing != null) trailing!,
-            ],
-          ),
+          Text(title, style: context.text.titleMedium),
           const SizedBox(height: 10),
           child,
         ],

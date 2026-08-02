@@ -15,6 +15,14 @@ enum StatKind {
   /// (field − against) / against, signed. Return on capital.
   ratio,
 
+  /// How much of an original balance has been cleared: against − field,
+  /// summed, floored at zero per row.
+  ///
+  /// Read from the rows, not the ledger, and therefore exact for balances that
+  /// were already part-paid before the ledger existed. A figure like "Received"
+  /// sitting beside "Outstanding" must never contradict the rows underneath it.
+  paidDown,
+
   /// Sum of ledger event amounts for a field, inside the selected range.
   /// The only stat that moves when the range chips change on a balance module.
   eventSum,
@@ -66,6 +74,12 @@ class StatSpec {
     String label, {
     List<EventKind> kinds = const [EventKind.increment],
   }) : this._(StatKind.eventSum, label, field: field, eventKinds: kinds);
+
+  /// [field] is the balance still outstanding, [against] the amount originally
+  /// owed. Rows with no [against] column report nothing paid, which is right:
+  /// a debt that has never been paid against carries no original figure.
+  const StatSpec.paidDown(String field, String against, String label)
+      : this._(StatKind.paidDown, label, field: field, against: against);
 
   const StatSpec.count(String label) : this._(StatKind.count, label);
 

@@ -119,6 +119,59 @@ void main() {
       expect(stats.single.value, '+13.7%');
     });
 
+    test('paidDown is exact from the rows, needing no ledger at all', () {
+      const spec = DashboardSpec(stats: [
+        StatSpec.paidDown('amount', 'original_amount', 'Received'),
+      ]);
+      final stats = statsFor(
+        spec: spec,
+        rows: [
+          // Never paid against, and no original_amount column at all.
+          {'amount': 5000.0, 'status': 'open'},
+          // Part-paid: 20000 owed, 12000 left.
+          {'amount': 12000.0, 'original_amount': 20000.0, 'status': 'partial'},
+          // Settled through an account: the balance was zeroed.
+          {'amount': 0.0, 'original_amount': 3500.0, 'status': 'settled'},
+        ],
+        events: const [],
+        parentType: 'debtors',
+      );
+      expect(stats.single.value, '\u20b911,500');
+    });
+
+    test('a write-off counts as nothing received', () {
+      const spec = DashboardSpec(stats: [
+        StatSpec.paidDown('amount', 'original_amount', 'Received'),
+      ]);
+      // Settling with no account keeps the amount for history, so nothing
+      // was actually collected — and nothing must be reported as collected.
+      final stats = statsFor(
+        spec: spec,
+        rows: [
+          {'amount': 4000.0, 'original_amount': 4000.0, 'status': 'settled'},
+        ],
+        events: const [],
+        parentType: 'debtors',
+      );
+      expect(stats.single.value, '\u20b90');
+    });
+
+    test('paidDown never goes negative if a balance was raised', () {
+      const spec = DashboardSpec(stats: [
+        StatSpec.paidDown('outstanding', 'principal', 'Paid'),
+      ]);
+      final stats = statsFor(
+        spec: spec,
+        // Interest accrual can push outstanding above the original principal.
+        rows: [
+          {'outstanding': 90000.0, 'principal': 80000.0},
+        ],
+        events: const [],
+        parentType: 'loans',
+      );
+      expect(stats.single.value, '\u20b90');
+    });
+
     test('outstanding excludes settled rows', () {
       const spec = DashboardSpec(stats: [
         StatSpec.outstanding('amount', 'Outstanding'),

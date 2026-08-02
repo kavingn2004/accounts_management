@@ -197,6 +197,19 @@ Stat _stat(
       final pct = (sum(s.field!) - base) / base * 100;
       return Stat(s.label, '${pct >= 0 ? '+' : '−'}${_pct(pct.abs())}%');
 
+    case StatKind.paidDown:
+      // Per row, floored at zero: interest accrual can push a balance above
+      // the original principal, and that is not a negative repayment. A row
+      // with no original column reports nothing paid — including a write-off,
+      // which keeps its amount and so nets to zero on its own.
+      final cleared = rows.fold(0.0, (a, r) {
+        final original = (r[s.against!] as num?)?.toDouble();
+        if (original == null) return a;
+        final paid = original - _num(r, s.field!);
+        return a + (paid > 0 ? paid : 0);
+      });
+      return Stat(s.label, money(cleared));
+
     case StatKind.eventSum:
       final kinds = s.eventKinds!.map((k) => k.name).toSet();
       var total = 0.0;

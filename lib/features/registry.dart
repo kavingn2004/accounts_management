@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../core/formatters.dart';
 import '../core/theme.dart';
 import '../data/finance_repository.dart';
-import '../data/module_event.dart';
 import '../models/dashboard_spec.dart';
 import '../models/field_spec.dart';
 
@@ -208,7 +207,10 @@ class Modules {
     dashboard: const DashboardSpec(
       stats: [
         StatSpec.outstanding('amount', 'Outstanding'),
-        StatSpec.eventSum('amount', 'Received', kinds: [EventKind.decrement]),
+        // Read from the rows, not the ledger: balances part-paid before the
+        // ledger existed would otherwise report ₹0 beside a row that plainly
+        // says money came in.
+        StatSpec.paidDown('amount', 'original_amount', 'Received'),
         StatSpec.count('People'),
       ],
       chart: ChartSpec.cumulative('amount', label: 'Owed to you'),
@@ -243,7 +245,7 @@ class Modules {
     dashboard: const DashboardSpec(
       stats: [
         StatSpec.outstanding('amount', 'Outstanding'),
-        StatSpec.eventSum('amount', 'Paid', kinds: [EventKind.decrement]),
+        StatSpec.paidDown('amount', 'original_amount', 'Paid'),
         StatSpec.count('People'),
       ],
       chart: ChartSpec.cumulative('amount', label: 'You owe'),
@@ -308,7 +310,7 @@ class Modules {
       stats: [
         StatSpec.sum('outstanding', 'Outstanding'),
         StatSpec.sum('emi', 'Monthly EMI'),
-        StatSpec.eventSum('outstanding', 'Paid', kinds: [EventKind.decrement]),
+        StatSpec.paidDown('outstanding', 'principal', 'Paid'),
       ],
       chart: ChartSpec.cumulative('outstanding', label: 'Outstanding'),
       breakdown: BreakdownSpec.byRow(value: 'outstanding', of: 'principal'),

@@ -230,6 +230,10 @@ FlTitlesData _titles(BuildContext context, List<SeriesPoint> pts) {
       sideTitles: SideTitles(
         showTitles: true,
         reservedSize: 22,
+        // One label per data point. Without an explicit interval fl_chart
+        // samples the axis at fractional positions and repeats each label
+        // several times over.
+        interval: 1,
         getTitlesWidget: (value, meta) {
           final i = value.toInt();
           if (i < 0 || i >= pts.length) return const SizedBox();

@@ -87,4 +87,24 @@ void main() {
     expect(find.text('Return'), findsOneWidget);
     expect(find.text('+13.7%'), findsOneWidget);
   });
+
+  testWidgets('debtors report what has actually been received', (t) async {
+    await E2E.launch(t);
+    await E2E.openDrawerItem(t, 'Debtors');
+
+    // Seeded: Meera part-paid 8,000 of 20,000 and Suresh settled 3,500 into
+    // an account. Neither has a ledger entry — the figure must still agree
+    // with the rows rather than reporting zero beside them.
+    expect(find.text('Received'), findsOneWidget);
+    expect(find.text('₹11,500'), findsOneWidget);
+  });
+
+  testWidgets('loans report principal cleared, closed loans included',
+      (t) async {
+    await E2E.launch(t);
+    await E2E.openDrawerItem(t, 'Loan');
+
+    // 500,000 → 320,000 outstanding, plus an 80,000 loan fully repaid.
+    expect(find.text('₹2,60,000'), findsOneWidget);
+  });
 }

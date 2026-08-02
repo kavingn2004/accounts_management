@@ -11,6 +11,7 @@ import '../../data/module_event.dart';
 import '../../models/field_spec.dart';
 import '../../services/providers.dart';
 import 'export_service.dart';
+import 'module_dashboard.dart';
 
 /// The calendar day a row belongs to, or null when nothing parseable is there.
 ///
@@ -58,6 +59,7 @@ class EntityScreen extends ConsumerStatefulWidget {
 
 class _EntityScreenState extends ConsumerState<EntityScreen> {
   late Future<List<Json>> _future;
+  Future<List<Json>> _events = Future.value(const []);
   List<String> _accountNames = [];
 
   // Date-range filter state (only used when cfg.dateFiltered is true).
@@ -196,9 +198,13 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   }
 
   void _reload() {
-    _future = ref
-        .read(repoProvider)
-        .list(cfg.table, orderBy: cfg.orderBy, ascending: false);
+    final repo = ref.read(repoProvider);
+    _future = repo.list(cfg.table, orderBy: cfg.orderBy, ascending: false);
+    // Only modules with a dashboard read the ledger — every other page would
+    // be paying for a table it never looks at.
+    _events = cfg.dashboard == null
+        ? Future.value(const [])
+        : repo.list(moduleEventsTable);
   }
 
   Future<void> _refresh() async {
@@ -800,7 +806,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ),
       body: Column(
         children: [
-          if (cfg.dateFiltered) _buildFilterBar(),
+          if (_showFilterBar) _buildFilterBar(),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refresh,
@@ -815,42 +821,21 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                   }
                   final allRows = snap.data ?? [];
                   final rows = _applyFilter(allRows);
-                  if (rows.isEmpty) {
-                    final hasAny = allRows.isNotEmpty;
-                    final inRange = hasAny && cfg.dateFiltered;
-                    return ListView(
-                      padding: const EdgeInsets.fromLTRB(
-                          AppTheme.screenPad, 80, AppTheme.screenPad, 0),
-                      children: [
-                        EmptyState(
-                          title: inRange
-                              ? 'Nothing in this range'
-                              : 'No ${cfg.title.toLowerCase()} yet',
-                          message: inRange
-                              ? 'Widen the filter, or add an entry with the + button.'
-                              : 'Tap + to record your first entry.',
-                        ),
-                      ],
-                    );
-                  }
+                  final range = _activeRange();
                   return Column(
                     children: [
-                      if (cfg.dateFiltered) _summaryBanner(rows),
-                      Expanded(
-                        child: ListView.builder(
-                          padding: const EdgeInsets.only(
-                            left: AppTheme.screenPad,
-                            right: AppTheme.screenPad,
-                            bottom: 96,
-                          ),
-                          itemCount: rows.length,
-                          itemBuilder: (context, i) => _buildRow(
-                            context,
-                            rows[i],
-                            isLast: i == rows.length - 1,
+                      if (cfg.dashboard != null)
+                        FutureBuilder<List<Json>>(
+                          future: _events,
+                          builder: (context, evSnap) => ModuleDashboard(
+                            config: cfg,
+                            rows: rows,
+                            events: evSnap.data ?? const [],
+                            rangeStart: range?.start,
+                            rangeEnd: range?.end,
                           ),
                         ),
-                      ),
+                      Expanded(child: _buildList(rows, allRows)),
                     ],
                   );
                 },
@@ -858,6 +843,47 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Every module with a dashboard gets the range chips, not just the ones
+  /// whose rows carry a `date`. On a dateless module the chips move the
+  /// dashboard alone — `_applyFilter` still returns the list untouched.
+  bool get _showFilterBar => cfg.dateFiltered || cfg.dashboard != null;
+
+  /// The rows, or the empty state. Kept separate from [build] so the empty
+  /// state renders *below* the dashboard rather than replacing it: a module
+  /// with goals but nothing in range should still show its figures.
+  Widget _buildList(List<Json> rows, List<Json> allRows) {
+    if (rows.isEmpty) {
+      final inRange = allRows.isNotEmpty && cfg.dateFiltered;
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(
+            AppTheme.screenPad, 24, AppTheme.screenPad, 0),
+        children: [
+          EmptyState(
+            title: inRange
+                ? 'Nothing in this range'
+                : 'No ${cfg.title.toLowerCase()} yet',
+            message: inRange
+                ? 'Widen the filter, or add an entry with the + button.'
+                : 'Tap + to record your first entry.',
+          ),
+        ],
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(
+        left: AppTheme.screenPad,
+        right: AppTheme.screenPad,
+        bottom: 96,
+      ),
+      itemCount: rows.length,
+      itemBuilder: (context, i) => _buildRow(
+        context,
+        rows[i],
+        isLast: i == rows.length - 1,
       ),
     );
   }
@@ -1050,57 +1076,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     }
     return r.label;
   }
-
-  Widget _summaryBanner(List<Json> rows) {
-    final total = rows.fold<double>(
-      0,
-      (a, r) => a + ((r['amount'] as num?)?.toDouble() ?? 0),
-    );
-    final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppTheme.screenPad, 0, AppTheme.screenPad, 12),
-      child: AppCard(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _summaryLabel(),
-                    style: context.text.labelMedium
-                        ?.copyWith(color: c.textSecondary),
-                  ),
-                  const SizedBox(height: 2),
-                  MoneyText(money(total), serif: true),
-                ],
-              ),
-            ),
-            Text(
-              '${rows.length} ${rows.length == 1 ? 'entry' : 'entries'}',
-              style: context.text.labelMedium?.copyWith(
-                color: c.textSecondary,
-                fontFeatures: tabular,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _summaryLabel() => switch (_dateRange) {
-        _DateRange.today => 'Total today',
-        _DateRange.week => 'Total this week',
-        _DateRange.month => 'Total this month',
-        _DateRange.year => 'Total this year',
-        _DateRange.all => 'Total',
-        _DateRange.custom => 'Total in range',
-      };
 }
 
 enum _DateRange { today, week, month, year, all, custom }

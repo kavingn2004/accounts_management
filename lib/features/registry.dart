@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/formatters.dart';
 import '../core/theme.dart';
 import '../data/finance_repository.dart';
+import '../models/dashboard_spec.dart';
 import '../models/field_spec.dart';
 
 /// Subtitle for a settle-able debt row. While open/partial it shows how much
@@ -93,6 +94,16 @@ class Modules {
     ],
     incrementField: 'saved_amount',
     incrementLabel: 'Add to savings',
+    dashboard: const DashboardSpec(
+      stats: [
+        StatSpec.sum('saved_amount', 'Saved'),
+        StatSpec.sum('target_amount', 'Target'),
+        StatSpec.progress('saved_amount', 'target_amount', 'Of target'),
+        StatSpec.eventSum('saved_amount', 'Contributed'),
+      ],
+      chart: ChartSpec.cumulative('saved_amount', label: 'Savings growth'),
+      breakdown: BreakdownSpec.byRow(value: 'saved_amount', of: 'target_amount'),
+    ),
     titleOf: (r) => (r['name'] ?? '').toString(),
     subtitleOf: (r) =>
         'Saved ${money(r['saved_amount'] as num?)} of ${money(r['target_amount'] as num?)}',

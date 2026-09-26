@@ -11,7 +11,11 @@ void main() {
     await E2E.launch(t);
     await E2E.openDrawerItem(t, 'Savings');
 
-    // The seeded "Emergency fund" goal sits at 120000.
+    // The seeded "Emergency fund" goal sits at 120000. Scroll the dashboard
+    // header away first: the row's overflow button otherwise sits beneath the
+    // floating action button, and the tap lands on the FAB instead.
+    await t.drag(find.byType(ListView).last, const Offset(0, -260));
+    await t.pumpAndSettle();
     await t.tap(find.byIcon(Icons.more_vert).first);
     await t.pumpAndSettle();
     await t.tap(find.text('Add to savings'));

@@ -4,7 +4,17 @@ import '../core/theme.dart';
 import '../data/finance_repository.dart';
 import 'dashboard_spec.dart';
 
-enum FieldType { text, number, date, select }
+enum FieldType {
+  text,
+  number,
+  date,
+  select,
+
+  /// Searchable mutual-fund picker. Writes three keys rather than one —
+  /// `scheme_code` (the field's own key), plus `scheme_name` and `fund_house`
+  /// captured at selection so the row can name its fund without a lookup.
+  fundSearch,
+}
 
 /// Describes one editable field of an entity (drives the add form).
 class FieldSpec {
@@ -15,6 +25,13 @@ class FieldSpec {
     this.required = false,
     this.options,
     this.optionsTable,
+    this.hint,
+    this.dependsOn,
+    this.hints,
+    this.visibleWhen,
+    this.hiddenWhen,
+    this.hiddenWhenFilled,
+    this.section,
   });
 
   final String key;
@@ -22,6 +39,40 @@ class FieldSpec {
   final FieldType type;
   final bool required;
   final List<String>? options; // for FieldType.select (static)
+
+  /// Helper text under the field. For inputs whose correct value isn't
+  /// guessable from the label alone — an AMFI scheme code, a CoinGecko id.
+  final String? hint;
+
+  /// Key of another field in the same form whose value this one varies with.
+  /// An investment's symbol means something different for a stock than for a
+  /// mutual fund, and the form should say which is wanted before it's typed
+  /// wrong rather than reject it after.
+  final String? dependsOn;
+
+  /// [dependsOn] value → helper text, falling back to [hint].
+  final Map<String, String>? hints;
+
+  /// Show this field only while [dependsOn] holds one of these values. Null
+  /// means always visible. A hidden field is never saved, so switching type
+  /// can't leave a stale figure behind on the row.
+  final Set<String>? visibleWhen;
+
+  /// Hide this field while [dependsOn] holds one of these values — the
+  /// complement of [visibleWhen], for a field that suits every case but one
+  /// (an amount typed by hand everywhere except where an engine derives it).
+  final Set<String>? hiddenWhen;
+
+  /// Hide this field once the named field has any value at all.
+  ///
+  /// For two fields that answer the same question different ways: a total
+  /// worth, or a quantity times a price. Asking for both invites them to
+  /// disagree, and then something has to silently win.
+  final String? hiddenWhenFilled;
+
+  /// Heading shown above this field, starting a group. Repeat the same string
+  /// on consecutive fields to keep them under one heading.
+  final String? section;
 
   /// For a dynamic select: load option labels from the `name` column of this
   /// table (e.g. 'accounts'). Stored value is the chosen name.
@@ -50,6 +101,7 @@ class EntityConfig {
     this.setLabel,
     this.decrementField,
     this.decrementLabel,
+    this.decrementConfirm,
     this.interestRateField,
     this.dueDateField,
     this.paymentInflow = false,
@@ -61,6 +113,10 @@ class EntityConfig {
     this.paymentsTable,
     this.exportable = false,
     this.dateFiltered = false,
+    this.liveTracked = false,
+    this.redeemable = false,
+    this.cascadeTables = const [],
+    this.seedOnCreate,
     this.dashboard,
   });
 
@@ -102,6 +158,11 @@ class EntityConfig {
   /// user-entered amount (e.g. paying down a creditor or loan balance).
   final String? decrementField;
   final String? decrementLabel;
+
+  /// Verb on the dialog's confirm button. Defaults to "Pay", which is right
+  /// for a debt and wrong for a savings withdrawal — the same dialog serves
+  /// both, so the module says which word it wants.
+  final String? decrementConfirm;
 
   /// If set (with [decrementField]), one period of interest at this annual-%
   /// column is accrued onto the balance before the payment is subtracted.
@@ -156,6 +217,28 @@ class EntityConfig {
   /// If true, the EntityScreen shows a date-range filter row (Today/Week/Month/
   /// Year/All/Custom). Filters and exports use the row's `date` field.
   final bool dateFiltered;
+
+  /// If true, rows carrying a symbol and a quantity are repriced from the
+  /// market when the screen opens and on pull-to-refresh. Rows without both
+  /// are left alone, so enabling this never disturbs a hand-kept module.
+  final bool liveTracked;
+
+  /// If true, rows can be sold back: units come off the holding and the
+  /// proceeds land in a chosen account. The return leg of a module whose
+  /// creation takes money out of an account.
+  final bool redeemable;
+
+  /// Tables holding child rows keyed by `parent_id` on this row. They are
+  /// deleted with it — an installment ledger or payment history whose parent
+  /// is gone is unreachable data that nothing will ever clean up.
+  final List<String> cascadeTables;
+
+  /// Extra keys written on creation only, derived from what was typed.
+  ///
+  /// For values that are the app's business rather than the user's — a SIP's
+  /// cash boundary date, for instance, which must record when the row started
+  /// existing and can never be edited afterwards.
+  final Json Function(Json values)? seedOnCreate;
 
   /// Dashboard header shown above the list: headline figures, a chart, and an
   /// optional per-row breakdown. Null means no header.

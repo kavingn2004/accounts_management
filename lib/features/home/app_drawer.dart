@@ -7,8 +7,10 @@ import '../../core/supabase_config.dart';
 import '../../core/theme.dart';
 import '../../services/providers.dart';
 import '../accounts/accounts_screen.dart';
+import '../ask/ask_screen.dart';
 import '../alerts/alert_providers.dart';
 import '../alerts/alerts_screen.dart';
+import '../history/history_screen.dart';
 import '../common/entity_screen.dart';
 import '../profile/profile_screen.dart';
 import '../registry.dart';
@@ -96,6 +98,12 @@ class AppDrawer extends ConsumerWidget {
                   label: 'Accounts',
                   onTap: () => _push(context, const AccountsScreen()),
                 ),
+                _NavRow(
+                  icon: Icons.help_outline,
+                  tone: ModuleTone.invest,
+                  label: 'Ask',
+                  onTap: () => _push(context, const AskScreen()),
+                ),
                 for (final m in Modules.all)
                   _NavRow(
                     icon: m.icon,
@@ -103,6 +111,12 @@ class AppDrawer extends ConsumerWidget {
                     label: m.title,
                     onTap: () => _push(context, EntityScreen(config: m)),
                   ),
+                _NavRow(
+                  icon: Icons.history,
+                  tone: ModuleTone.alerts,
+                  label: 'History',
+                  onTap: () => _push(context, const HistoryScreen()),
+                ),
                 Consumer(builder: (context, ref, _) {
                   final count = ref.watch(unreadAlertCountProvider);
                   return _NavRow(

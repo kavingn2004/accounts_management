@@ -1,0 +1,69 @@
+<!--
+  Confirmation email for a new Accounflow account.
+
+  Paste into Supabase → Authentication → Email Templates → "Confirm signup".
+  Kept in the repo because the dashboard is the only copy otherwise, and an
+  email nobody can read is as broken as a page nobody can load.
+
+  Supabase substitutes {{ .ConfirmationURL }}. Everything else is plain HTML.
+
+  Written for email clients, not browsers, which is why it looks dated:
+    - tables for layout; Outlook ignores div-based layout and flexbox
+    - every style inline; Gmail strips <style> blocks
+    - the button is a padded table cell, not a styled <a>; several clients
+      drop background colours on links
+    - no images, so nothing breaks when a client blocks remote content
+    - the raw link is repeated underneath, because corporate mail scanners
+      rewrite or strip buttons and the user still has to be able to get in
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="background:#F7F5F2;margin:0;padding:32px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="max-width:460px;background:#FFFFFF;border:1px solid #E7E2DC;border-radius:14px;">
+        <tr>
+          <td style="padding:32px 32px 8px 32px;">
+            <div style="font-size:20px;font-weight:700;color:#1A1715;letter-spacing:-0.2px;">
+              Accounflow
+            </div>
+            <div style="font-size:15px;line-height:22px;color:#6B635C;padding-top:10px;">
+              Confirm your email address to finish setting up your account.
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:24px 32px 8px 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" bgcolor="#C15F3C" style="border-radius:10px;">
+                  <a href="{{ .ConfirmationURL }}"
+                     style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:600;
+                            color:#FFFFFF;text-decoration:none;border-radius:10px;">
+                    Confirm my email
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:16px 32px 32px 32px;">
+            <div style="font-size:13px;line-height:20px;color:#6B635C;">
+              If the button does not work, paste this link into your browser:
+            </div>
+            <div style="font-size:12px;line-height:18px;padding-top:6px;word-break:break-all;">
+              <a href="{{ .ConfirmationURL }}" style="color:#A44B2C;">{{ .ConfirmationURL }}</a>
+            </div>
+            <div style="font-size:12px;line-height:18px;color:#9A918A;padding-top:18px;border-top:1px solid #EFEAE4;margin-top:18px;">
+              If you did not create this account, you can ignore this email —
+              nothing happens until the link is opened.
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>

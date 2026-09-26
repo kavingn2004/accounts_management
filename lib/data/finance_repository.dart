@@ -21,3 +21,15 @@ abstract class FinanceRepository {
   /// Accounts with their live computed balance (key 'balance' added per row).
   Future<List<Json>> accountsWithBalances();
 }
+
+/// The two extra writes History's undo needs. Kept apart from
+/// [FinanceRepository] so lightweight fakes don't have to implement them; a
+/// repository without them simply records nothing to undo.
+abstract interface class UndoableRepository {
+  /// Insert and return the new row's id.
+  Future<String> insertReturningId(String table, Json values);
+
+  /// Put [row] back exactly as given — same id, same `created_at` — replacing
+  /// the current row with that id or re-creating it.
+  Future<void> restore(String table, Json row);
+}

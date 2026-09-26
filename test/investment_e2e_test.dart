@@ -60,12 +60,21 @@ void main() {
     await tester.enterText(textFields.at(2), '31000');
     await tester.pump();
 
-    // Paid-from picker is the last dropdown; choose "Cash".
+    // Paid-from picker is the last dropdown; choose "Cash". The form is taller
+    // than the 800x600 test surface now, so scroll it into view first.
+    await tester.ensureVisible(
+        find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(DropdownButtonFormField<String>).last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cash').last);
     await tester.pumpAndSettle();
 
+    // The form is taller than the 800x600 test surface now that live-price
+    // fields are on it; the sheet scrolls, so bring Save into view first.
+    await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Save investment'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Save investment'));
     await tester.pumpAndSettle();
 
@@ -150,6 +159,11 @@ void main() {
     await tester.enterText(fields.at(1), '10000');
     await tester.enterText(fields.at(2), '12000');
     await tester.pump();
+    // The form is taller than the 800x600 test surface now that live-price
+    // fields are on it; the sheet scrolls, so bring Save into view first.
+    await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Save investment'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Save investment'));
     await tester.pumpAndSettle();
 

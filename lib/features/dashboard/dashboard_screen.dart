@@ -91,13 +91,32 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _future = _load());
+    // Block body: an arrow here returns the assigned Future from the closure,
+    // which Flutter rejects — pull-to-refresh would throw instead of reloading.
+    setState(() {
+      _future = _load();
+    });
     await _future;
   }
 
   void _openModule(BuildContext context, EntityConfig cfg) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => EntityScreen(config: cfg)),
+    );
+  }
+
+  /// Drill into one breakdown bar: every expense that made it up, over the
+  /// period the chart is currently showing.
+  void _showSliceExpenses(BreakdownSlice slice, List<Json> expenses) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _SliceSheet(
+        label: slice.label,
+        total: slice.value,
+        period: _period,
+        rows: expensesInSlice(_period, expenses, slice.label),
+      ),
     );
   }
 
@@ -248,7 +267,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               _ChartCard(
                 title: 'Expense breakdown',
                 child: _ExpenseBars(
-                    slices: breakdown, tones: _breakdownTones),
+                  slices: breakdown,
+                  tones: _breakdownTones,
+                  onTap: (slice) =>
+                      _showSliceExpenses(slice, data?.expenses ?? const []),
+                ),
               ),
             ],
           );
@@ -541,11 +564,17 @@ class _BarChart extends StatelessWidget {
 }
 
 /// Expense breakdown as horizontal bars, largest first. Shows the top
-/// [_collapsedCount] and expands to every payee on demand.
+/// [_collapsedCount] and expands to every payee on demand. Each bar is
+/// tappable and reports its slice, so the caller can list what's behind it.
 class _ExpenseBars extends StatefulWidget {
-  const _ExpenseBars({required this.slices, required this.tones});
+  const _ExpenseBars({
+    required this.slices,
+    required this.tones,
+    this.onTap,
+  });
   final List<BreakdownSlice> slices;
   final List<ModuleTone> tones;
+  final ValueChanged<BreakdownSlice>? onTap;
 
   @override
   State<_ExpenseBars> createState() => _ExpenseBarsState();
@@ -581,50 +610,66 @@ class _ExpenseBarsState extends State<_ExpenseBars> {
       children: [
         for (var i = 0; i < shown; i++)
           Padding(
-            padding: EdgeInsets.only(bottom: i == shown - 1 ? 0 : 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+            // 4px of ripple padding either side of the row keeps the visible
+            // 14px gap between bars while giving the tap a real target.
+            padding: EdgeInsets.only(bottom: i == shown - 1 ? 0 : 6),
+            child: InkWell(
+              onTap: widget.onTap == null
+                  ? null
+                  : () => widget.onTap!(slices[i]),
+              borderRadius: BorderRadius.circular(AppTheme.rControl),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        slices[i].label,
-                        style: context.text.bodyMedium,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    MoneyText(money(slices[i].value)),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final frac = maxVal > 0 ? slices[i].value / maxVal : 0.0;
-                    return Container(
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: c.border,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Container(
-                          width: (constraints.maxWidth * frac)
-                              .clamp(3.0, constraints.maxWidth),
-                          decoration: BoxDecoration(
-                            color:
-                                widget.tones[i % widget.tones.length].of(context),
-                            borderRadius: BorderRadius.circular(3),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            slices[i].label,
+                            style: context.text.bodyMedium,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ),
-                    );
-                  },
+                        const SizedBox(width: 8),
+                        MoneyText(money(slices[i].value)),
+                        if (widget.onTap != null) ...[
+                          const SizedBox(width: 2),
+                          Icon(Icons.chevron_right,
+                              size: 15, color: c.textSecondary),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final frac = maxVal > 0 ? slices[i].value / maxVal : 0.0;
+                        return Container(
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: c.border,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              width: (constraints.maxWidth * frac)
+                                  .clamp(3.0, constraints.maxWidth),
+                              decoration: BoxDecoration(
+                                color: widget.tones[i % widget.tones.length]
+                                    .of(context),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         if (hidden > 0) ...[
@@ -656,6 +701,100 @@ class _ExpenseBarsState extends State<_ExpenseBars> {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// The expenses behind one breakdown bar, for the dashboard's current period.
+/// Capped at three-quarters of the screen so the chart it came from stays
+/// visible behind it; the list scrolls inside that.
+class _SliceSheet extends StatelessWidget {
+  const _SliceSheet({
+    required this.label,
+    required this.total,
+    required this.period,
+    required this.rows,
+  });
+
+  final String label;
+  final double total;
+  final Period period;
+  final List<Json> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final count = rows.length;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.75,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppTheme.screenPad, 12, AppTheme.screenPad, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SheetHandle(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: context.text.titleLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  MoneyText(money(total), style: context.text.titleLarge),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${count == 1 ? '1 entry' : '$count entries'} · '
+                'this ${period.label.toLowerCase()}',
+                style:
+                    context.text.labelMedium?.copyWith(color: c.textSecondary),
+              ),
+              const SizedBox(height: 10),
+              if (rows.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: EmptyState(title: 'Nothing to show'),
+                )
+              else
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    itemCount: rows.length,
+                    itemBuilder: (_, i) {
+                      final r = rows[i];
+                      final note = (r['note'] ?? '').toString();
+                      final date = prettyDate(r['date']?.toString());
+                      final account = (r['account'] ?? '').toString();
+                      return AppListRow(
+                        icon: Icons.north_east,
+                        tone: ModuleTone.expense,
+                        title: note.isNotEmpty ? note : date,
+                        subtitle: [
+                          if (note.isNotEmpty) date,
+                          if (account.isNotEmpty) account,
+                        ].where((s) => s.isNotEmpty).join(' · '),
+                        trailing: money(r['amount'] as num?),
+                        showTopBorder: i > 0,
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

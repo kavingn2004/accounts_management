@@ -4,7 +4,8 @@ import 'local_store.dart';
 
 /// On-device implementation of [FinanceRepository]. All reads/writes go through
 /// [LocalStore] (shared_preferences). Seeds sample data on first run.
-class LocalRepository extends FinanceRepository {
+class LocalRepository extends FinanceRepository
+    implements UndoableRepository {
   LocalRepository(this._store);
   final LocalStore _store;
 
@@ -21,7 +22,12 @@ class LocalRepository extends FinanceRepository {
       _store.read(table);
 
   @override
-  Future<void> insert(String table, Json values) async {
+  Future<void> insert(String table, Json values) =>
+      insertReturningId(table, values);
+
+  @override
+  Future<String> insertReturningId(String table, Json values) async {
+    final id = _id();
     final rows = _store.read(table);
     // Stamp the creation time the way Supabase does. The dashboard's stock
     // trends need it to tell a debt that existed at the start of the period
@@ -30,8 +36,34 @@ class LocalRepository extends FinanceRepository {
     rows.insert(0, {
       'created_at': DateTime.now().toIso8601String(),
       ...values,
-      'id': _id(),
+      'id': id,
     });
+    await _store.write(table, rows);
+    return id;
+  }
+
+  @override
+  Future<void> restore(String table, Json row) async {
+    final rows = _store.read(table);
+    final id = row['id'].toString();
+    final i = rows.indexWhere((r) => r['id'].toString() == id);
+    if (i >= 0) {
+      rows[i] = Json.from(row);
+    } else {
+      // Rows are kept newest first; slot the row back where its creation time
+      // puts it, so it doesn't jump to the top of every list. Rows with no
+      // stamp are the oldest (see [insert]).
+      final at = row['created_at']?.toString();
+      var pos = rows.length;
+      if (at != null) {
+        final j = rows.indexWhere((r) {
+          final c = r['created_at']?.toString();
+          return c == null || c.compareTo(at) < 0;
+        });
+        if (j >= 0) pos = j;
+      }
+      rows.insert(pos, Json.from(row));
+    }
     await _store.write(table, rows);
   }
 

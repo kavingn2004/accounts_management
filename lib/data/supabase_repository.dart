@@ -10,7 +10,8 @@ import 'finance_repository.dart';
 /// model exactly, so all balance/dashboard math is reused from [FinanceMath].
 /// Row Level Security scopes every query to the signed-in user, but we also set
 /// `user_id` on insert to satisfy the insert policy.
-class SupabaseRepository extends FinanceRepository {
+class SupabaseRepository extends FinanceRepository
+    implements UndoableRepository {
   SupabaseRepository(this._client);
 
   final SupabaseClient _client;
@@ -45,9 +46,30 @@ class SupabaseRepository extends FinanceRepository {
   }
 
   @override
-  Future<void> insert(String table, Json values) async {
+  Future<void> insert(String table, Json values) =>
+      insertReturningId(table, values);
+
+  @override
+  Future<String> insertReturningId(String table, Json values) async {
     final data = {...values}..remove('id');
-    await _table(table).insert({'user_id': _uid, 'data': data});
+    final row = await _table(table)
+        .insert({'user_id': _uid, 'data': data})
+        .select('id')
+        .single();
+    return row['id'].toString();
+  }
+
+  @override
+  Future<void> restore(String table, Json row) async {
+    final data = {...row}
+      ..remove('id')
+      ..remove('created_at');
+    await _table(table).upsert({
+      'id': row['id'],
+      'user_id': _uid,
+      'data': data,
+      if (row['created_at'] != null) 'created_at': row['created_at'],
+    });
   }
 
   @override

@@ -1,7 +1,8 @@
 # SIP tracking with live NAV — design
 
 **Date:** 2026-07-30
-**Status:** Draft, awaiting review
+**Status:** Implemented 2026-08-02 — see §12 for where the build differs from
+this design.
 **Goal:** Show the live current value of mutual-fund SIPs (held in Groww) inside
 the accounts app, derived automatically rather than typed in by hand.
 
@@ -464,3 +465,42 @@ None blocking. Two worth revisiting after phase 4:
   dashboard, not just per-fund on the detail screen.
 - Whether a paused SIP should keep valuing (it will — units still exist) but be
   visually distinguished in the list.
+
+---
+
+## 12. What the implementation changed
+
+Built 2026-08-02, after live investment tracking
+(`2026-08-02-investment-live-tracking-design.md`) had already shipped. That
+feature did not exist when this design was written, and it changed one decision.
+
+**Valuation moved out of this engine.** The design had `sip_service` compute
+`units × NAV` and write `current_value`. It doesn't. It writes **units to
+`quantity`** and stops there; `InvestmentSync` multiplies by the latest NAV and
+writes `current_value`, exactly as it does for a stock or a gram of gold. One
+writer per figure, one NAV fetch, one set of throttling and error rules. The
+service also sets the row's `symbol` to the scheme code, so a SIP is priceable
+the moment it is created without the code being typed twice.
+
+The consequence is that `nav` and `nav_date` are not row-level keys. Their
+equivalents are `last_price` and `price_at`, written by the sync.
+
+**Everything else landed as designed**, including the two NAV resolution rules,
+day-31 clamping, inception clamping, the `cash_from` boundary, `cash_posted`
+idempotency, editable units, XIRR with a bisection fallback, and the once-a-day
+cache.
+
+**Two behaviours were corrected during the build**, both found by tests:
+
+- Returning from the detail screen used to force a NAV refetch, because reload
+  and pull-to-refresh shared one code path. Only an explicit pull now bypasses
+  the cache.
+- A freshly generated installment had no id until the ledger was read back, so
+  the due-installment banner appeared one refresh late and its buttons had
+  nothing to address. The engine now re-reads after generating.
+
+**Files**: `lib/data/nav_api.dart`, `nav_cache.dart`, `sip_math.dart`;
+`lib/services/sip_service.dart`; `lib/features/investments/sip_screen.dart`,
+`fund_picker.dart`; `supabase/migrations/0006_sip_installments.sql`.
+Tests: `sip_math_test.dart` (31), `nav_cache_test.dart` (16),
+`sip_service_test.dart` (16), `sip_screen_test.dart` (7).

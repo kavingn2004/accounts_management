@@ -7,6 +7,7 @@ import '../../core/components.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
+import '../../data/history.dart';
 import '../../services/providers.dart';
 import '../common/module_metrics.dart';
 import 'account_metrics.dart';
@@ -121,12 +122,16 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                       double.tryParse(openC.text.trim()) ?? 0,
                 };
                 final repo = ref.read(repoProvider);
-                if (existing == null) {
-                  await repo.insert('accounts', values);
-                } else {
-                  await repo.update(
-                      'accounts', existing['id'].toString(), values);
-                }
+                await recordAction(
+                  repo,
+                  label: '${existing == null ? 'Added' : 'Edited'} account · '
+                      '${values['name']}',
+                  table: 'accounts',
+                  body: () => existing == null
+                      ? repo.insert('accounts', values)
+                      : repo.update(
+                          'accounts', existing['id'].toString(), values),
+                );
                 ref.read(dataRevisionProvider.notifier).state++;
                 if (ctx.mounted) Navigator.pop(ctx);
               },
@@ -162,7 +167,13 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
       ),
     );
     if (ok != true) return;
-    await ref.read(repoProvider).delete('accounts', a['id'].toString());
+    final repo = ref.read(repoProvider);
+    await recordAction(
+      repo,
+      label: 'Deleted account · ${a['name']}',
+      table: 'accounts',
+      body: () => repo.delete('accounts', a['id'].toString()),
+    );
     _refresh();
   }
 

@@ -2,9 +2,41 @@ import 'package:flutter/material.dart';
 
 import '../core/formatters.dart';
 import '../core/theme.dart';
+import '../data/finance_math.dart';
 import '../data/finance_repository.dart';
+import '../data/module_event.dart';
 import '../models/dashboard_spec.dart';
 import '../models/field_spec.dart';
+
+/// Investment types a price can be looked up for. Mirrors the keys of
+/// [QuoteService.defaultSources] — a type absent from both is simply manual.
+const _priceableTypes = {'stock', 'fund', 'mf', 'crypto', 'gold'};
+
+/// The SIP engine owns a `sip` row's symbol, units and invested total, so the
+/// form neither asks for them nor lets them be edited.
+const _sipOnly = {'sip'};
+
+/// Subtitle for an investment row.
+///
+/// Live rows trade "total invested" for the unit price, the quantity it was
+/// multiplied by, and the age of that price — a live figure with no visible
+/// age is indistinguishable from a stale one. Everything else reads as before.
+String _investmentSubtitle(Json r) {
+  final type = (r['type'] ?? '').toString();
+  final price = (r['last_price'] as num?)?.toDouble();
+  final quantity = (r['quantity'] as num?)?.toDouble();
+  final at = DateTime.tryParse((r['price_at'] ?? '').toString());
+
+  if (price != null && quantity != null && quantity > 0) {
+    return [
+      if (type.isNotEmpty) type,
+      '${money(price)} × ${quantityText(quantity)}',
+      if (at != null) ago(at),
+    ].join(' · ');
+  }
+  return '$type · total invested '
+      '${money((r['total_invested'] ?? r['invested_amount']) as num?)}';
+}
 
 /// Subtitle for a settle-able debt row. While open/partial it shows how much
 /// has been paid down of the original (part-by-part progress) + the due date.
@@ -108,12 +140,22 @@ class Modules {
     ],
     incrementField: 'saved_amount',
     incrementLabel: 'Add to savings',
+    // The way back out. Same machinery as a debtor repaying you: reduce the
+    // balance, and the money lands IN the chosen account rather than leaving
+    // it. Without this a goal could only ever be fed, never spent — which is
+    // not what saving is for.
+    decrementField: 'saved_amount',
+    decrementLabel: 'Withdraw',
+    decrementConfirm: 'Withdraw',
+    paymentInflow: true,
     dashboard: const DashboardSpec(
       stats: [
         StatSpec.sum('saved_amount', 'Saved'),
         StatSpec.sum('target_amount', 'Target'),
         StatSpec.progress('saved_amount', 'target_amount', 'Of target'),
         StatSpec.eventSum('saved_amount', 'Contributed'),
+        StatSpec.eventSum('saved_amount', 'Withdrawn',
+            kinds: [EventKind.decrement]),
       ],
       chart: ChartSpec.cumulative('saved_amount', label: 'Savings growth'),
       breakdown: BreakdownSpec.byRow(value: 'saved_amount', of: 'target_amount'),
@@ -140,9 +182,117 @@ class Modules {
           type: FieldType.select,
           options: ['stock', 'fund', 'fd', 'mf', 'sip', 'crypto', 'gold',
             'other']),
+      // --- Money ---
+      // A SIP derives both of these from its installment ledger, so it must
+      // not offer them for typing — the engine would overwrite whatever went
+      // in, which is worse than never asking.
       FieldSpec('invested_amount', 'Invested',
-          type: FieldType.number, required: true),
-      FieldSpec('current_value', 'Current value', type: FieldType.number),
+          type: FieldType.number,
+          required: true,
+          section: 'Money',
+          dependsOn: 'type',
+          hiddenWhen: _sipOnly,
+          hint: 'What you put in'),
+      // Hidden once a quantity is given: the holding is then described as
+      // units times a price, and asking for the total as well invites the two
+      // to disagree.
+      FieldSpec('current_value', 'Current value',
+          type: FieldType.number,
+          section: 'Money',
+          dependsOn: 'type',
+          hiddenWhen: _sipOnly,
+          hiddenWhenFilled: 'quantity',
+          hint: 'What it is worth today — or fill in the holding below '
+              'instead and let it be worked out'),
+      // --- Holding: units, and where the price comes from ---
+      FieldSpec('quantity', 'Quantity held',
+          type: FieldType.number,
+          section: 'Holding',
+          dependsOn: 'type',
+          visibleWhen: _priceableTypes,
+          hint: 'Shares, units, coins or grams — the price is multiplied by '
+              'this',
+          hints: {
+            'stock': 'Number of shares',
+            'mf': 'Units held (not rupees)',
+            'fund': 'Units held (not rupees)',
+            'crypto': 'Coins held, e.g. 0.35',
+            'gold': 'Grams held',
+          }),
+      // A price you keep yourself, for holdings the app cannot or should not
+      // fetch — an unlisted fund, or your jeweller's gold rate rather than
+      // international spot. Overrides the symbol when both are present.
+      FieldSpec('market_price', 'Current market price',
+          type: FieldType.number,
+          section: 'Holding',
+          dependsOn: 'type',
+          visibleWhen: _priceableTypes,
+          hint: 'Price of one unit today — leave blank to fetch it live',
+          hints: {
+            'stock': "Today's share price — leave blank to fetch it live",
+            'mf': "Today's NAV — leave blank to fetch it live",
+            'fund': "Today's NAV — leave blank to fetch it live",
+            'crypto': 'Price of one coin — leave blank to fetch it live',
+            'gold': 'Your rate per gram — overrides international spot',
+          }),
+      FieldSpec(
+        'symbol',
+        'Symbol (for live prices)',
+        section: 'Holding',
+        dependsOn: 'type',
+        visibleWhen: _priceableTypes,
+        hint: 'Leave blank to keep updating this row by hand',
+        hints: {
+          'stock': 'NSE ticker, e.g. RELIANCE — add .BO for a BSE listing',
+          'mf': 'AMFI scheme code, e.g. 120503',
+          'fund': 'AMFI scheme code, e.g. 120503',
+          'crypto': 'CoinGecko id, e.g. bitcoin or ethereum (not BTC)',
+          'gold': "Type 'gold' — priced per gram in INR",
+        },
+      ),
+      // --- SIP: the schedule, from which units and value are derived. ---
+      FieldSpec('scheme_code', 'Fund',
+          type: FieldType.fundSearch,
+          required: true,
+          section: 'Schedule',
+          dependsOn: 'type',
+          visibleWhen: _sipOnly,
+          hint: 'Search AMFI by name'),
+      FieldSpec('sip_amount', 'Amount per installment',
+          type: FieldType.number,
+          required: true,
+          section: 'Schedule',
+          dependsOn: 'type',
+          visibleWhen: _sipOnly),
+      FieldSpec('sip_frequency', 'Frequency',
+          type: FieldType.select,
+          options: ['monthly', 'weekly', 'quarterly'],
+          section: 'Schedule',
+          dependsOn: 'type',
+          visibleWhen: _sipOnly),
+      FieldSpec('sip_day', 'Debit day',
+          type: FieldType.number,
+          section: 'Schedule',
+          dependsOn: 'type',
+          visibleWhen: _sipOnly,
+          hint: 'Day of the month (1–31); for weekly, 1 = Monday … 7 = Sunday'),
+      // Which account the mandate draws from. With it set, each installment
+      // debits the account as it falls due — the way the real mandate does.
+      // Left blank, the app asks before moving money instead of guessing.
+      FieldSpec('sip_account', 'Debit from account',
+          type: FieldType.select,
+          optionsTable: 'accounts',
+          section: 'Schedule',
+          dependsOn: 'type',
+          visibleWhen: _sipOnly,
+          hint: 'Installments from today onward come out of this account'),
+      FieldSpec('sip_start_date', 'First installment',
+          type: FieldType.date,
+          required: true,
+          section: 'Schedule',
+          dependsOn: 'type',
+          visibleWhen: _sipOnly,
+          hint: 'Earlier installments are filled in automatically'),
     ],
     incrementField: 'invested_amount',
     incrementAlsoField: 'current_value',
@@ -153,10 +303,23 @@ class Modules {
     setField: 'current_value',
     setLabel: 'Update current value',
     principalAccountField: 'invested_amount',
+    liveTracked: true,
+    redeemable: true,
+    cascadeTables: const ['sip_installments'],
+    // A SIP's cash boundary: installments dated before the row was created are
+    // history and post no cash movement, because those debits were already
+    // recorded by hand. Everything from today onward asks first.
+    seedOnCreate: (v) => v['type'] != 'sip'
+        ? const {}
+        : {'cash_from': isoDate(DateTime.now()), 'sip_active': true},
     titleOf: (r) => (r['name'] ?? '').toString(),
-    subtitleOf: (r) => '${r['type'] ?? ''} · total invested '
-        '${money((r['total_invested'] ?? r['invested_amount']) as num?)}',
-    trailingOf: (r) => money(r['current_value'] as num?),
+    // A live row reports the price it was valued at and how fresh that is —
+    // the figure on the right is only trustworthy if you can see its age.
+    // Rows without live tracking keep showing what they always did.
+    subtitleOf: _investmentSubtitle,
+    // The same rule net worth uses, so the row and the total can never
+    // disagree about what a holding is worth.
+    trailingOf: (r) => money(investmentValue(r)),
     dashboard: const DashboardSpec(
       stats: [
         // Rows created before `total_invested` existed carry the same figure
@@ -201,6 +364,7 @@ class Modules {
     originalAmountField: 'original_amount',
     settledAccountField: 'settled_account',
     paymentsTable: 'debt_payments',
+    cascadeTables: const ['debt_payments'],
     titleOf: (r) => (r['person_name'] ?? '').toString(),
     subtitleOf: _settlementSubtitle(received: true),
     trailingOf: (r) => money(r['amount'] as num?),
@@ -239,6 +403,7 @@ class Modules {
     originalAmountField: 'original_amount',
     settledAccountField: 'settled_account',
     paymentsTable: 'debt_payments',
+    cascadeTables: const ['debt_payments'],
     titleOf: (r) => (r['person_name'] ?? '').toString(),
     subtitleOf: _settlementSubtitle(received: false),
     trailingOf: (r) => money(r['amount'] as num?),

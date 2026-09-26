@@ -86,7 +86,14 @@ void main() {
 
     expect(find.text('Salary'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.more_vert).first);
+    // Rows are newest-date first, so Salary (dated weeks ago) isn't the top
+    // row. Open the menu on its own row.
+    final salaryRow = find.ancestor(
+        of: find.text('Salary'), matching: find.byType(Row)).first;
+    await tester.ensureVisible(salaryRow);
+    await tester.pumpAndSettle();
+    await tester.tap(
+        find.descendant(of: salaryRow, matching: find.byIcon(Icons.more_vert)));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();

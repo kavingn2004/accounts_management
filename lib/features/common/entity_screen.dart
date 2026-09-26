@@ -7,9 +7,18 @@ import '../../core/components.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
+import '../../data/history.dart';
 import '../../data/module_event.dart';
+import '../../data/nav_api.dart';
 import '../../models/field_spec.dart';
 import '../../services/providers.dart';
+import '../../data/finance_math.dart';
+import '../../services/quotes/investment_sync.dart';
+import '../../services/redemption_service.dart';
+import '../../services/sip_service.dart';
+import '../investments/fund_picker.dart';
+import '../history/history_label.dart';
+import '../investments/sip_screen.dart';
 import 'export_service.dart';
 import 'module_dashboard.dart';
 
@@ -46,6 +55,29 @@ List<Json> filterRowsByDate(List<Json> rows, DateTimeRange? range) {
   }).toList();
 }
 
+/// Newest `date` first. Rows on the same day keep the most recently added one
+/// on top (by `created_at`, then by the repository's newest-first order), and
+/// rows with no readable date sink to the bottom rather than vanish.
+@visibleForTesting
+List<Json> sortRowsByDateDesc(List<Json> rows) {
+  final keyed = [
+    for (var i = 0; i < rows.length; i++)
+      (i: i, row: rows[i], day: _rowDay(rows[i]['date'])),
+  ];
+  keyed.sort((a, b) {
+    if (a.day != b.day) {
+      if (a.day == null) return 1;
+      if (b.day == null) return -1;
+      return b.day!.compareTo(a.day!);
+    }
+    final ca = a.row['created_at']?.toString() ?? '';
+    final cb = b.row['created_at']?.toString() ?? '';
+    final byCreated = cb.compareTo(ca);
+    return byCreated != 0 ? byCreated : a.i.compareTo(b.i);
+  });
+  return [for (final k in keyed) k.row];
+}
+
 /// Generic list + add screen driven entirely by an [EntityConfig].
 /// Used by every module (income, expenses, savings, ...).
 class EntityScreen extends ConsumerStatefulWidget {
@@ -61,6 +93,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   late Future<List<Json>> _future;
   Future<List<Json>> _events = Future.value(const []);
   List<String> _accountNames = [];
+
+  /// Result of the last price refresh, or null when the module isn't live
+  /// tracked and nothing has been fetched.
+  SyncOutcome? _sync;
+
+  /// Result of the last SIP ledger refresh: what was generated, what is stale,
+  /// and which installments are waiting on a cash decision.
+  SipRefreshOutcome? _sip;
 
   // Date-range filter state (only used when cfg.dateFiltered is true).
   _DateRange _dateRange = _DateRange.month;
@@ -100,8 +140,13 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
 
   /// Apply the date filter to a list of rows. Returns input unchanged when
   /// the config isn't date-filtered or "All" is selected.
-  List<Json> _applyFilter(List<Json> rows) =>
-      cfg.dateFiltered ? filterRowsByDate(rows, _activeRange()) : rows;
+  List<Json> _applyFilter(List<Json> rows) {
+    final kept =
+        cfg.dateFiltered ? filterRowsByDate(rows, _activeRange()) : rows;
+    // Date-ordered modules (income, expenses, transfers) read newest-first by
+    // the date on the entry, not by when it happened to be typed in.
+    return cfg.orderBy == 'date' ? sortRowsByDateDesc(kept) : kept;
+  }
 
   Future<void> _pickCustomRange() async {
     final now = DateTime.now();
@@ -179,6 +224,16 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     });
   }
 
+  /// Run [body] as one History entry, so every write it makes can be undone
+  /// together from the History screen.
+  Future<void> _record(String verb, Json row, Future<void> Function() body) =>
+      recordAction(
+        ref.read(repoProvider),
+        label: historyLabel(cfg, verb, row),
+        table: cfg.table,
+        body: body,
+      );
+
   /// Optional account dropdown used inside the add/pay dialogs.
   Widget _accountPicker(String label, String? value, ValueChanged<String?> on) {
     if (_accountNames.isEmpty) return const SizedBox.shrink();
@@ -197,18 +252,73 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     );
   }
 
-  void _reload() {
+  void _reload({bool forcePrices = false}) {
     final repo = ref.read(repoProvider);
-    _future = repo.list(cfg.table, orderBy: cfg.orderBy, ascending: false);
     // Only modules with a dashboard read the ledger — every other page would
     // be paying for a table it never looks at.
+    //
+    // Failure is swallowed here rather than at the FutureBuilder: a Supabase
+    // project that has not run migration 0005 has no `module_events` table at
+    // all, and the resulting error would otherwise go unhandled while the rows
+    // future is still loading. A missing ledger costs the chart its history,
+    // which the empty state already accounts for — it must not take the page
+    // down with it.
     _events = cfg.dashboard == null
         ? Future.value(const [])
-        : repo.list(moduleEventsTable);
+        : repo
+            .list(moduleEventsTable)
+            .catchError((_) => const <Json>[]);
+
+    final rows = repo.list(cfg.table, orderBy: cfg.orderBy, ascending: false);
+    _future = cfg.liveTracked ? _withLivePrices(rows, forcePrices) : rows;
   }
 
-  Future<void> _refresh() async {
-    setState(_reload);
+  /// Reprice live-tracked rows before the list paints, so a value and its
+  /// price never appear a beat apart.
+  ///
+  /// Prices are an enhancement over stored data, never a precondition for it:
+  /// any failure here is caught and the rows are returned exactly as the
+  /// repository gave them. A rate-limited API must not empty the screen.
+  Future<List<Json>> _withLivePrices(
+      Future<List<Json>> pending, bool force) async {
+    final rows = await pending;
+
+    // Order matters: the SIP engine settles how many units are held, then the
+    // sync prices them. Running it the other way would value a SIP against
+    // yesterday's unit count on the day an installment lands.
+    //
+    // The two are caught separately on purpose. They fail for unrelated
+    // reasons — a NAV outage has nothing to do with a stock quote — and one
+    // shared catch would let a broken SIP silently stop every other row on the
+    // screen from being priced.
+    try {
+      final sip = await ref.read(sipServiceProvider).refresh(rows, force: force);
+      if (mounted) setState(() => _sip = sip);
+    } catch (_) {
+      // Deliberately swallowed — see above.
+    }
+
+    try {
+      final outcome = await ref.read(investmentSyncProvider).run(
+            rows,
+            events: await _events,
+            force: force,
+          );
+      if (mounted) setState(() => _sync = outcome);
+    } catch (_) {
+      // Deliberately swallowed — see above.
+    }
+    return rows;
+  }
+
+  /// Reload the list.
+  ///
+  /// [force] bypasses the price throttle, and is reserved for a pull-to-refresh
+  /// — an explicit request for fresh figures. Reloading after an edit or on
+  /// returning from a detail screen is not one: it would download NAV again
+  /// for data that cannot have moved since the last look.
+  Future<void> _refresh({bool force = true}) async {
+    setState(() => _reload(forcePrices: force));
     ref.read(dataRevisionProvider.notifier).state++;
     await _future;
   }
@@ -221,7 +331,462 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     );
     if (saved != true) return;
     if (existing == null) await _logOpeningEvent();
-    _refresh();
+    await _refresh(force: false);
+    if (cfg.liveTracked) _reportPriceCheck();
+  }
+
+  /// Sell out of a holding and put the proceeds into an account.
+  ///
+  /// Units and amount are kept in step as you type either one, because the two
+  /// ways people think about selling — "sell 50 units" and "take ₹5,000 out" —
+  /// are the same action, and making someone do the arithmetic invites a typo
+  /// into a figure that moves real money.
+  Future<void> _redeem(Json row) async {
+    final price = RedemptionService.unitPrice(row);
+    final held = (row['quantity'] as num?)?.toDouble() ?? 0;
+    final value = investmentValue(row);
+    if (value <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This holding has nothing to redeem')),
+      );
+      return;
+    }
+
+    final unitsCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    String? account = _accountNames.isNotEmpty ? _accountNames.first : null;
+    String? error;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          void syncFromUnits(String v) {
+            if (price == null) return;
+            final u = double.tryParse(v.trim());
+            setSt(() => amountCtrl.text =
+                u == null ? '' : (u * price).toStringAsFixed(2));
+          }
+
+          void syncFromAmount(String v) {
+            if (price == null) return;
+            final a = double.tryParse(v.trim());
+            setSt(() => unitsCtrl.text =
+                a == null ? '' : (a / price).toStringAsFixed(3));
+          }
+
+          return AlertDialog(
+            title: const Text('Redeem'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  price == null
+                      ? 'Worth ${money(value)}'
+                      : 'Holding ${quantityText(held)} at ${money(price)} '
+                          '— worth ${money(value)}',
+                  style: context.text.labelMedium
+                      ?.copyWith(color: context.colors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                if (price != null) ...[
+                  TextField(
+                    controller: unitsCtrl,
+                    autofocus: true,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Units'),
+                    onChanged: syncFromUnits,
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                TextField(
+                  controller: amountCtrl,
+                  autofocus: price == null,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                  ],
+                  decoration: const InputDecoration(labelText: 'Amount'),
+                  onChanged: syncFromAmount,
+                ),
+                if (price != null)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        unitsCtrl.text = quantityText(held);
+                        syncFromUnits(unitsCtrl.text);
+                      },
+                      child: const Text('Redeem all'),
+                    ),
+                  ),
+                if (_accountNames.isNotEmpty)
+                  _accountPicker('Credit to account', account,
+                      (v) => setSt(() => account = v)),
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  Text(error!,
+                      style: context.text.labelMedium
+                          ?.copyWith(color: context.colors.negative)),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final proceeds =
+                      double.tryParse(amountCtrl.text.trim()) ?? 0;
+                  final units = double.tryParse(unitsCtrl.text.trim()) ?? 0;
+                  if (proceeds <= 0) {
+                    setSt(() => error = 'Enter an amount to redeem');
+                    return;
+                  }
+                  if (units > held + 1e-9) {
+                    setSt(() => error = 'You hold fewer units than that');
+                    return;
+                  }
+                  Navigator.pop(ctx, true);
+                },
+                child: const Text('Redeem'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _record(
+        'Redeemed',
+        row,
+        () => ref.read(redemptionServiceProvider).redeem(
+              row,
+              units: double.tryParse(unitsCtrl.text.trim()) ?? 0,
+              proceeds: double.tryParse(amountCtrl.text.trim()) ?? 0,
+              account: account,
+            ),
+      );
+    } on RedemptionError catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    }
+    await _refresh(force: false);
+  }
+
+  /// Raise or lower the installment amount from a chosen date onward.
+  ///
+  /// Not a plain edit of the amount: installments are derived from it, so
+  /// changing it outright would restate every past debit at the new figure and
+  /// overstate what was actually invested. The change is dated instead, and
+  /// history keeps the amounts that were really paid.
+  Future<void> _changeSipAmount(Json row) async {
+    final current = (row[SipFields.amount] as num?)?.toDouble() ?? 0;
+    final controller = TextEditingController();
+    var from = DateTime.now();
+
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Change SIP amount'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Currently ${money(current)} per installment. Installments '
+                'before the date below keep the amount they were paid at.',
+                style: context.text.labelSmall
+                    ?.copyWith(color: context.colors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                ],
+                decoration: const InputDecoration(labelText: 'New amount'),
+              ),
+              const SizedBox(height: 12),
+              InkWell(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: ctx,
+                    initialDate: from,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                  );
+                  if (picked != null) setSt(() => from = picked);
+                },
+                child: InputDecorator(
+                  decoration:
+                      const InputDecoration(labelText: 'Effective from'),
+                  child: Text(isoDate(from)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, double.tryParse(controller.text.trim())),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (amount == null || amount <= 0) return;
+
+    await _record(
+      'Changed SIP amount of',
+      row,
+      () => ref
+          .read(sipServiceProvider)
+          .changeAmount(row, amount: amount, from: from),
+    );
+    await _refresh(force: false);
+  }
+
+  /// Record a one-off purchase outside the schedule. Units are allotted at the
+  /// NAV for the date given, exactly as a scheduled installment would be.
+  Future<void> _addLumpsum(Json row) async {
+    final controller = TextEditingController();
+    var date = DateTime.now();
+    String? account;
+
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Add lumpsum'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                ],
+                decoration: const InputDecoration(labelText: 'Amount'),
+              ),
+              const SizedBox(height: 12),
+              InkWell(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: ctx,
+                    initialDate: date,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked != null) setSt(() => date = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Purchase date'),
+                  child: Text(isoDate(date)),
+                ),
+              ),
+              if (_accountNames.isNotEmpty)
+                _accountPicker('From account (optional)', account,
+                    (v) => setSt(() => account = v)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, double.tryParse(controller.text.trim())),
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (amount == null || amount <= 0 || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    var failed = false;
+    await _record('Added lumpsum to', row, () async {
+      try {
+        await ref.read(sipServiceProvider).addLumpsum(
+              row,
+              date: date,
+              amount: amount,
+              account: account,
+            );
+      } catch (e) {
+        // Without the ledger table there is nowhere to record a purchase, and a
+        // lumpsum that silently vanishes is worse than one that is refused.
+        messenger.showSnackBar(SnackBar(
+          content: Text(
+            e.toString().contains(SipFields.table)
+                ? 'Cannot record a lumpsum yet — run the sip_installments '
+                    'migration. Scheduled installments still value correctly.'
+                : 'Could not record the lumpsum: $e',
+          ),
+        ));
+        failed = true;
+        return;
+      }
+      if (account != null) await _recordCashMove(account!, -amount);
+    });
+    if (failed) return;
+    await _refresh(force: false);
+  }
+
+  /// Post the cash for a due SIP installment.
+  ///
+  /// Units were counted the moment the installment was generated; this only
+  /// records where the money came from. `cash_posted` is set in the same step,
+  /// so a repeated refresh can never debit an account twice.
+  Future<void> _confirmInstallment(Json due) async {
+    final amount = (due[InstallmentFields.amount] as num?)?.toDouble() ?? 0;
+    final suggested = (due['suggested_account'] ?? '').toString();
+    var account = _accountNames.contains(suggested)
+        ? suggested
+        : (_accountNames.isNotEmpty ? _accountNames.first : null);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Confirm installment'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${due['parent_name']} · '
+                '${prettyDate(due[InstallmentFields.date]?.toString())}',
+                style: context.text.bodyMedium,
+              ),
+              const SizedBox(height: 6),
+              MoneyText(money(amount), style: context.text.titleLarge),
+              if (_accountNames.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: account,
+                  decoration:
+                      const InputDecoration(labelText: 'Debit from account'),
+                  items: [
+                    const DropdownMenuItem(
+                        value: null, child: Text('— Don\'t record cash —')),
+                    ..._accountNames.map(
+                        (a) => DropdownMenuItem(value: a, child: Text(a))),
+                  ],
+                  onChanged: (v) => setSt(() => account = v),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+
+    final repo = ref.read(repoProvider);
+    await recordAction(
+      repo,
+      label: 'Posted ${due['parent_name'] ?? ''} SIP installment',
+      table: cfg.table,
+      body: () async {
+        await repo.update(SipFields.table, due['id'].toString(), {
+          InstallmentFields.cashPosted: true,
+          if (account != null) InstallmentFields.account: account,
+        });
+        if (account != null && amount > 0) {
+          await repo.insert('cash_moves', {
+            'account': account,
+            'amount': -amount, // a SIP debit is money out
+            'date': due[InstallmentFields.date],
+            'note': '${due['parent_name']} SIP',
+          });
+        }
+      },
+    );
+    await _refresh();
+  }
+
+  /// Mark a due installment as not taken — it keeps its place in the ledger,
+  /// struck through, but stops counting towards units or invested capital.
+  Future<void> _skipInstallment(Json due) async {
+    final repo = ref.read(repoProvider);
+    await recordAction(
+      repo,
+      label: 'Skipped ${due['parent_name'] ?? ''} SIP installment',
+      table: cfg.table,
+      body: () => repo.update(
+        SipFields.table,
+        due['id'].toString(),
+        {InstallmentFields.skipped: true, InstallmentFields.units: 0},
+      ),
+    );
+    await _refresh();
+  }
+
+  /// Confirm what a just-saved symbol resolved to.
+  ///
+  /// Without this a mistyped ticker looks identical to a correct one: the row
+  /// saves, nothing happens, and the value silently never updates again. The
+  /// save itself is never blocked — a row with a bad symbol is still a row.
+  void _reportPriceCheck() {
+    final outcome = _sync;
+    if (outcome == null || outcome.isIdle || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (outcome.failures.isNotEmpty) {
+      final first = outcome.failures.entries.first;
+      final more = outcome.failures.length - 1;
+      messenger.showSnackBar(SnackBar(
+        content: Text('${first.key}: ${first.value}'
+            '${more > 0 ? ' (and $more more)' : ''}'),
+      ));
+      return;
+    }
+    if (outcome.priced.length == 1) {
+      final p = outcome.priced.first;
+      messenger.showSnackBar(SnackBar(
+        content: Text('${p.name}: ${money(p.price)} × '
+            '${quantityText(p.quantity)} = ${money(p.value)} · ${p.source}'),
+      ));
+    } else if (outcome.priced.isNotEmpty) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('${outcome.priced.length} holdings repriced'),
+      ));
+    }
   }
 
   /// Ledger entry for a newly created row.
@@ -273,8 +838,28 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   }
 
   Future<void> _delete(Json row) async {
-    await ref.read(repoProvider).delete(cfg.table, row['id'].toString());
-    _refresh();
+    final repo = ref.read(repoProvider);
+    final id = row['id'].toString();
+    // One History entry for the row and its children, so undo brings the
+    // whole thing back.
+    await _record('Deleted', row, () async {
+      await repo.delete(cfg.table, id);
+
+      // Children go with the parent. Left behind, a ledger keyed on a row that
+      // no longer exists is unreachable from the UI and grows forever.
+      for (final table in [...cfg.cascadeTables, moduleEventsTable]) {
+        try {
+          final children = await repo.list(table);
+          for (final child in children) {
+            if ((child['parent_id'] ?? '').toString() != id) continue;
+            await repo.delete(table, child['id'].toString());
+          }
+        } catch (_) {
+          // A table that does not exist has nothing to clean up.
+        }
+      }
+    });
+    await _refresh(force: false);
   }
 
   /// Increment a numeric column (e.g. savings saved_amount) by a typed amount.
@@ -332,30 +917,32 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     if (cum != null) {
       values[cum] = ((row[cum] as num?)?.toDouble() ?? 0) + amount;
     }
-    await ref
-        .read(repoProvider)
-        .update(cfg.table, row['id'].toString(), values);
-    await _logEvent(
-      row: row,
-      field: field,
-      kind: EventKind.increment,
-      amount: amount,
-      balanceAfter: current + amount,
-      account: account,
-    );
-    // A second entry for the mirrored column — this is what lets the
-    // Investment chart draw invested and current value as two lines from a
-    // single contribution.
-    if (also != null) {
+    await _record('Added money to', row, () async {
+      await ref
+          .read(repoProvider)
+          .update(cfg.table, row['id'].toString(), values);
       await _logEvent(
         row: row,
-        field: also,
+        field: field,
         kind: EventKind.increment,
         amount: amount,
-        balanceAfter: values[also] as double,
+        balanceAfter: current + amount,
+        account: account,
       );
-    }
-    if (account != null) await _recordCashMove(account!, -amount);
+      // A second entry for the mirrored column — this is what lets the
+      // Investment chart draw invested and current value as two lines from a
+      // single contribution.
+      if (also != null) {
+        await _logEvent(
+          row: row,
+          field: also,
+          kind: EventKind.increment,
+          amount: amount,
+          balanceAfter: values[also] as double,
+        );
+      }
+      if (account != null) await _recordCashMove(account!, -amount);
+    });
     _refresh();
   }
 
@@ -411,17 +998,19 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       ),
     );
     if (value == null) return;
-    await ref.read(repoProvider).update(
-        cfg.table, row['id'].toString(), {field: value});
-    // A revaluation replaces rather than adjusts, so `amount` carries the new
-    // figure — there is no meaningful delta to record.
-    await _logEvent(
-      row: row,
-      field: field,
-      kind: EventKind.set,
-      amount: value,
-      balanceAfter: value,
-    );
+    await _record('Updated value of', row, () async {
+      await ref.read(repoProvider).update(
+          cfg.table, row['id'].toString(), {field: value});
+      // A revaluation replaces rather than adjusts, so `amount` carries the new
+      // figure — there is no meaningful delta to record.
+      await _logEvent(
+        row: row,
+        field: field,
+        kind: EventKind.set,
+        amount: value,
+        balanceAfter: value,
+      );
+    });
     _refresh();
   }
 
@@ -475,8 +1064,11 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                 ],
-                decoration: const InputDecoration(
-                    labelText: 'Payment amount', prefixText: '- '),
+                decoration: InputDecoration(
+                    // "Withdraw amount" for savings, "Payment amount" for a
+                    // debt — the same dialog serves both.
+                    labelText: '${cfg.decrementLabel ?? 'Payment'} amount',
+                    prefixText: '- '),
               ),
               _accountPicker(
                   accountLabel, account, (v) => setSt(() => account = v)),
@@ -509,7 +1101,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             FilledButton(
               onPressed: () =>
                   Navigator.pop(ctx, double.tryParse(controller.text.trim())),
-              child: const Text('Pay'),
+              child: Text(cfg.decrementConfirm ?? 'Pay'),
             ),
           ],
         ),
@@ -537,37 +1129,39 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       }
     }
     if (dueField != null && due != null) updates[dueField] = isoDate(due!);
-    await ref.read(repoProvider).update(cfg.table, row['id'].toString(), updates);
-    // `next` is the balance actually written — after interest accrual, so the
-    // curve agrees with the figure on the row rather than with the payment.
-    await _logEvent(
-      row: row,
-      field: field,
-      kind: EventKind.decrement,
-      amount: pay,
-      balanceAfter: updates[field] as double,
-      account: account,
-    );
-    if (account != null) {
-      // Debtor repayment is money IN; creditor/loan/bill is money OUT.
-      await _recordCashMove(account!, cfg.paymentInflow ? pay : -pay);
-    }
-    // Log this installment to the per-person payment ledger. Best-effort: a
-    // missing ledger table (e.g. migration not yet run) must not fail the
-    // payment itself, which is already recorded above.
-    if (cfg.paymentsTable != null) {
-      try {
-        await ref.read(repoProvider).insert(cfg.paymentsTable!, {
-          'parent_id': row['id'].toString(),
-          'parent_type': cfg.table,
-          'amount': pay,
-          'account': account,
-          'date': isoDate(DateTime.now()),
-        });
-      } catch (_) {
-        // Ledger is non-critical; ignore and keep the payment.
+    await _record(cfg.paymentInflow ? 'Received from' : 'Paid', row, () async {
+      await ref.read(repoProvider).update(cfg.table, row['id'].toString(), updates);
+      // `next` is the balance actually written — after interest accrual, so the
+      // curve agrees with the figure on the row rather than with the payment.
+      await _logEvent(
+        row: row,
+        field: field,
+        kind: EventKind.decrement,
+        amount: pay,
+        balanceAfter: updates[field] as double,
+        account: account,
+      );
+      if (account != null) {
+        // Debtor repayment is money IN; creditor/loan/bill is money OUT.
+        await _recordCashMove(account!, cfg.paymentInflow ? pay : -pay);
       }
-    }
+      // Log this installment to the per-person payment ledger. Best-effort: a
+      // missing ledger table (e.g. migration not yet run) must not fail the
+      // payment itself, which is already recorded above.
+      if (cfg.paymentsTable != null) {
+        try {
+          await ref.read(repoProvider).insert(cfg.paymentsTable!, {
+            'parent_id': row['id'].toString(),
+            'parent_type': cfg.table,
+            'amount': pay,
+            'account': account,
+            'date': isoDate(DateTime.now()),
+          });
+        } catch (_) {
+          // Ledger is non-critical; ignore and keep the payment.
+        }
+      }
+    });
     _refresh();
   }
 
@@ -629,40 +1223,42 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         updates[cfg.settledAccountField!] = account;
       }
     }
-    await repo.update(cfg.table, row['id'].toString(), updates);
+    await _record('Settled', row, () async {
+      await repo.update(cfg.table, row['id'].toString(), updates);
 
-    // Only a settlement through an account moves a balance. A pure write-off
-    // leaves the amount intact for history, so there is no value change to
-    // record — and inventing a drop here would put a cliff on the outstanding
-    // curve that never happened (see the same rule in trends.dart).
-    if (account != null && field != null) {
-      await _logEvent(
-        row: row,
-        field: field,
-        kind: EventKind.set,
-        amount: 0,
-        balanceAfter: 0,
-        account: account,
-      );
-    }
+      // Only a settlement through an account moves a balance. A pure write-off
+      // leaves the amount intact for history, so there is no value change to
+      // record — and inventing a drop here would put a cliff on the outstanding
+      // curve that never happened (see the same rule in trends.dart).
+      if (account != null && field != null) {
+        await _logEvent(
+          row: row,
+          field: field,
+          kind: EventKind.set,
+          amount: 0,
+          balanceAfter: 0,
+          account: account,
+        );
+      }
 
-    if (account != null && remaining != 0) {
-      // Debtor = money IN to the account; creditor = money OUT.
-      await _recordCashMove(account!, cfg.paymentInflow ? remaining : -remaining);
-      if (cfg.paymentsTable != null) {
-        try {
-          await repo.insert(cfg.paymentsTable!, {
-            'parent_id': row['id'].toString(),
-            'parent_type': cfg.table,
-            'amount': remaining,
-            'account': account,
-            'date': isoDate(DateTime.now()),
-          });
-        } catch (_) {
-          // Ledger is non-critical.
+      if (account != null && remaining != 0) {
+        // Debtor = money IN to the account; creditor = money OUT.
+        await _recordCashMove(account!, cfg.paymentInflow ? remaining : -remaining);
+        if (cfg.paymentsTable != null) {
+          try {
+            await repo.insert(cfg.paymentsTable!, {
+              'parent_id': row['id'].toString(),
+              'parent_type': cfg.table,
+              'amount': remaining,
+              'account': account,
+              'date': isoDate(DateTime.now()),
+            });
+          } catch (_) {
+            // Ledger is non-critical.
+          }
         }
       }
-    }
+    });
     _refresh();
   }
 
@@ -677,7 +1273,13 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     if (cfg.settledAccountField != null) {
       updates[cfg.settledAccountField!] = null;
     }
-    await ref.read(repoProvider).update(cfg.table, row['id'].toString(), updates);
+    await _record(
+      'Reopened',
+      row,
+      () => ref
+          .read(repoProvider)
+          .update(cfg.table, row['id'].toString(), updates),
+    );
     _refresh();
   }
 
@@ -807,6 +1409,22 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       body: Column(
         children: [
           if (_showFilterBar) _buildFilterBar(),
+          if (cfg.liveTracked &&
+              _sync != null &&
+              _sync!.failures.isNotEmpty)
+            _PriceNotice(outcome: _sync!),
+          if (_sip != null && _sip!.errors.isNotEmpty)
+            _SipErrorNotice(errors: _sip!.errors),
+          if (_sip != null && _sip!.unsaved.isNotEmpty)
+            _UnsavedHistoryNotice(unsaved: _sip!.unsaved),
+          if (_sip != null && _sip!.stale.isNotEmpty)
+            _StaleNavNotice(stale: _sip!.stale),
+          if (_sip != null && _sip!.dueForConfirmation.isNotEmpty)
+            _DueInstallmentBanner(
+              due: _sip!.dueForConfirmation,
+              onConfirm: _confirmInstallment,
+              onSkip: _skipInstallment,
+            ),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refresh,
@@ -967,10 +1585,24 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       confirmDismiss: (_) => _confirmDelete(r),
       onDismissed: (_) => _delete(r),
       child: InkWell(
-        onTap: cfg.readOnly ? null : () => _openSheet(existing: r),
+        onTap: cfg.readOnly ? null : () => _openRow(r),
         child: row,
       ),
     );
+  }
+
+  /// A SIP has more to say than an edit form can hold — its ledger is where its
+  /// value comes from — so tapping one opens the detail screen and editing
+  /// moves to the row menu. Every other row behaves as before.
+  Future<void> _openRow(Json r) async {
+    if (SipService.isSip(r)) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => SipScreen(row: r)),
+      );
+      await _refresh(force: false);
+      return;
+    }
+    await _openSheet(existing: r);
   }
 
   Widget _rowMenu(Json r) {
@@ -999,15 +1631,48 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           _reopen(r);
         } else if (v == 'edit') {
           _openSheet(existing: r);
+        } else if (v == 'redeem') {
+          _redeem(r);
+        } else if (v == 'lumpsum') {
+          _addLumpsum(r);
+        } else if (v == 'step_up') {
+          _changeSipAmount(r);
+        } else if (v == 'pause') {
+          final pausing = r[SipFields.active] != false;
+          await _record(
+            pausing ? 'Paused' : 'Resumed',
+            r,
+            () => ref.read(repoProvider).update(cfg.table, r['id'].toString(),
+                {SipFields.active: !pausing}),
+          );
+          await _refresh();
         } else if (v == 'delete') {
           if (await _confirmDelete(r)) _delete(r);
         }
       },
       itemBuilder: (_) => [
-        if (cfg.incrementField != null)
+        // A SIP's units come from its ledger, so the generic add/set actions
+        // would fight the engine. It gets its own instead.
+        if (SipService.isSip(r)) ...[
+          _menuItem('lumpsum', Icons.add_circle_outline, 'Add lumpsum',
+              cfg.tone.of(context)),
+          _menuItem('step_up', Icons.trending_up, 'Change SIP amount',
+              cfg.tone.of(context)),
+          _menuItem(
+              'pause',
+              r[SipFields.active] == false
+                  ? Icons.play_arrow_outlined
+                  : Icons.pause_outlined,
+              r[SipFields.active] == false ? 'Resume SIP' : 'Pause SIP',
+              c.textSecondary),
+        ],
+        // Selling out: the only way money comes back from an investment.
+        if (cfg.redeemable)
+          _menuItem('redeem', Icons.south_west, 'Redeem', c.positive),
+        if (cfg.incrementField != null && !SipService.isSip(r))
           _menuItem('add_amount', Icons.add_circle_outline,
               cfg.incrementLabel ?? 'Add amount', cfg.tone.of(context)),
-        if (cfg.setField != null)
+        if (cfg.setField != null && !SipService.isSip(r))
           _menuItem('set_value', Icons.edit_note,
               cfg.setLabel ?? 'Update value', cfg.tone.of(context)),
         if (cfg.decrementField != null && (r['status'] ?? '') != 'settled')
@@ -1104,6 +1769,262 @@ extension _DateRangeLabel on _DateRange {
 
 enum _ExportFormat { csv, pdf }
 
+/// Valued correctly, but the installment history has nowhere to live.
+///
+/// Deliberately quiet — a bordered strip rather than the red one — because
+/// nothing on screen is wrong. Only the ability to edit history is missing,
+/// and saying "could not be valued" over a correct figure is a lie that sends
+/// people looking for a problem they don't have.
+class _UnsavedHistoryNotice extends StatelessWidget {
+  const _UnsavedHistoryNotice({required this.unsaved});
+  final Map<String, String> unsaved;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final names = unsaved.keys.join(', ');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.screenPad, 0, AppTheme.screenPad, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline, size: 16, color: c.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Figures for $names are worked out from the schedule and are '
+              'correct. ${unsaved.values.first}.',
+              style: context.text.labelMedium?.copyWith(color: c.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A SIP could not be valued at all: no NAV was reachable and none was cached,
+/// so there are no units and no invested total to show.
+///
+/// This is louder than the stale notice because the row beneath it reads ₹0,
+/// and an unexplained ₹0 looks like lost data rather than a missing download.
+class _SipErrorNotice extends StatelessWidget {
+  const _SipErrorNotice({required this.errors});
+  final Map<String, String> errors;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final first = errors.entries.first;
+    final more = errors.length - 1;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.screenPad, 0, AppTheme.screenPad, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.negative),
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.cloud_off_outlined, size: 16, color: c.negative),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${first.key} could not be valued'
+                  '${more > 0 ? ' (and $more more)' : ''}',
+                  style: context.text.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${first.value}. Its NAV has never been downloaded, so it '
+                  'holds no units yet — pull down to try again.',
+                  style:
+                      context.text.labelMedium?.copyWith(color: c.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// NAV could not be refreshed, so valuations are running on an earlier day's
+/// figures. Says so rather than passing an old NAV off as today's.
+class _StaleNavNotice extends StatelessWidget {
+  const _StaleNavNotice({required this.stale});
+  final Map<String, String> stale;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final names = stale.keys.join(', ');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.screenPad, 0, AppTheme.screenPad, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.history_toggle_off, size: 16, color: c.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'NAV for $names could not be refreshed — valued from the last '
+              'published figure.',
+              style: context.text.labelMedium?.copyWith(color: c.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Installments that have fallen due since the row was created and are waiting
+/// on a decision about the cash.
+///
+/// Units are already counted — this is only about which account paid. Skipping
+/// is offered beside confirming so an installment that did not actually go
+/// through can be dismissed without hunting for a menu.
+class _DueInstallmentBanner extends StatelessWidget {
+  const _DueInstallmentBanner({
+    required this.due,
+    required this.onConfirm,
+    required this.onSkip,
+  });
+
+  final List<Json> due;
+  final Future<void> Function(Json) onConfirm;
+  final Future<void> Function(Json) onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final first = due.first;
+    final amount = (first[InstallmentFields.amount] as num?)?.toDouble() ?? 0;
+    final more = due.length - 1;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          AppTheme.screenPad, 0, AppTheme.screenPad, 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.event_available, size: 16, color: c.textSecondary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  due.length == 1
+                      ? '1 SIP installment due'
+                      : '${due.length} SIP installments due',
+                  style: context.text.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Padding(
+            padding: const EdgeInsets.only(left: 24),
+            child: Text(
+              '${first['parent_name']} · '
+              '${prettyDate(first[InstallmentFields.date]?.toString())} · '
+              '${money(amount)}${more > 0 ? '  (+$more more)' : ''}',
+              style: context.text.labelMedium?.copyWith(color: c.textSecondary),
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => onSkip(first),
+                child: Text('Skip',
+                    style: TextStyle(color: c.textSecondary)),
+              ),
+              TextButton(
+                onPressed: () => onConfirm(first),
+                child: const Text('Confirm'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Quiet strip explaining why some rows are not showing a live figure.
+///
+/// Deliberately not a dialog and not an error state: the values on screen are
+/// still the last good ones, and the list stays fully usable. The browser case
+/// gets its own wording because no amount of retrying will fix it.
+class _PriceNotice extends StatelessWidget {
+  const _PriceNotice({required this.outcome});
+  final SyncOutcome outcome;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final failures = outcome.failures;
+    final first = failures.entries.first;
+    final message = outcome.platformBlocked
+        ? 'Live prices for this holding need the mobile app — a browser '
+            'cannot reach the price service.'
+        : failures.length == 1
+            ? '${first.key}: ${first.value}'
+            : '${failures.length} prices unavailable — '
+                '${first.key}: ${first.value}';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(AppTheme.screenPad, 0,
+          AppTheme.screenPad, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(AppTheme.rControl),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: c.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$message Showing the last known value.',
+              style:
+                  context.text.labelMedium?.copyWith(color: c.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.message});
   final String message;
@@ -1137,6 +2058,19 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
   final Map<String, DateTime> _dates = {};
   final Map<String, String> _selects = {};
   final Map<String, List<String>> _dynamicOptions = {};
+
+  /// Fund chosen in a [FieldType.fundSearch] field, by field key.
+  final Map<String, SchemeRef> _schemes = {};
+
+  /// Keys some other field's visibility or helper text reads. Typing in one of
+  /// these has to rebuild the form; typing in any other field must not, or
+  /// every keystroke anywhere would repaint the whole sheet.
+  late final Set<String> _watched = {
+    for (final f in cfg.fields) ...[
+      if (f.hiddenWhenFilled != null) f.hiddenWhenFilled!,
+      if (f.dependsOn != null) f.dependsOn!,
+    ]
+  };
   bool _busy = false;
   String? _error;
 
@@ -1192,6 +2126,19 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
               : DateTime.tryParse(current.toString());
           if (parsed != null) _dates[f.key] = parsed;
           break;
+        case FieldType.fundSearch:
+          // Rebuilt from what was stored alongside the code, so editing a row
+          // shows its fund without a network round trip.
+          final code = current is num
+              ? current.toInt()
+              : int.tryParse((current ?? '').toString());
+          if (code != null) {
+            _schemes[f.key] = SchemeRef(
+              code: code,
+              name: (e?['scheme_name'] ?? 'Scheme $code').toString(),
+            );
+          }
+          break;
       }
     }
     _loadDynamicOptions();
@@ -1242,6 +2189,12 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
     try {
       final values = <String, dynamic>{};
       for (final f in cfg.fields) {
+        // A field the form is hiding has no say over the row. Writing it would
+        // save whatever the user typed before switching type away from it.
+        if (!_isVisible(f)) {
+          values[f.key] = null;
+          continue;
+        }
         switch (f.type) {
           case FieldType.text:
             final t = _controllers[f.key]!.text.trim();
@@ -1260,55 +2213,73 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
             final v = _selects[f.key] ?? '';
             values[f.key] = v.isEmpty ? null : v;
             break;
+          case FieldType.fundSearch:
+            // Three keys from one field: the code identifies the scheme, the
+            // names let the row describe itself with no lookup.
+            final scheme = _schemes[f.key];
+            values[f.key] = scheme?.code;
+            values['scheme_name'] = scheme?.name;
+            break;
         }
+      }
+      if (!_isEdit && cfg.seedOnCreate != null) {
+        values.addAll(cfg.seedOnCreate!(values));
       }
       final repo = ref.read(repoProvider);
-      if (_isEdit) {
-        await repo.update(cfg.table, widget.existing!['id'].toString(), values);
-      } else {
-        // Settle-able rows: snapshot the full amount owed (so progress can be
-        // shown as it's paid down) and start in the 'open' state.
-        if (cfg.originalAmountField != null) {
-          values[cfg.originalAmountField!] = values['amount'];
-        }
-        if (cfg.statusField != null) {
-          values[cfg.statusField!] = 'open';
-        }
-        // Seed the running-total column from the first contribution.
-        final cum = cfg.cumulativeIncrementField;
-        final inc = cfg.incrementField;
-        if (cum != null && inc != null) {
-          values[cum] = values[inc];
-        }
-        await repo.insert(cfg.table, values);
-        // Record the initial transfer against the chosen account, if any.
-        // Debtor (paymentInflow) = money OUT (you lent); creditor = money IN.
-        if (_showPrincipalAccount && _principalAccount != null) {
-          final principal = (values['amount'] as num?)?.toDouble() ?? 0;
-          if (principal != 0) {
-            await repo.insert('cash_moves', {
-              'account': _principalAccount,
-              'amount': cfg.paymentInflow ? -principal : principal,
-              'date': isoDate(DateTime.now()),
-              'note': cfg.title,
-            });
+      await recordAction(
+        repo,
+        label: historyLabel(cfg, _isEdit ? 'Edited' : 'Added',
+            _isEdit ? {...widget.existing!, ...values} : values),
+        table: cfg.table,
+        body: () async {
+          if (_isEdit) {
+            await repo.update(cfg.table, widget.existing!['id'].toString(), values);
+          } else {
+            // Settle-able rows: snapshot the full amount owed (so progress can be
+            // shown as it's paid down) and start in the 'open' state.
+            if (cfg.originalAmountField != null) {
+              values[cfg.originalAmountField!] = values['amount'];
+            }
+            if (cfg.statusField != null) {
+              values[cfg.statusField!] = 'open';
+            }
+            // Seed the running-total column from the first contribution.
+            final cum = cfg.cumulativeIncrementField;
+            final inc = cfg.incrementField;
+            if (cum != null && inc != null) {
+              values[cum] = values[inc];
+            }
+            await repo.insert(cfg.table, values);
+            // Record the initial transfer against the chosen account, if any.
+            // Debtor (paymentInflow) = money OUT (you lent); creditor = money IN.
+            if (_showPrincipalAccount && _principalAccount != null) {
+              final principal = (values['amount'] as num?)?.toDouble() ?? 0;
+              if (principal != 0) {
+                await repo.insert('cash_moves', {
+                  'account': _principalAccount,
+                  'amount': cfg.paymentInflow ? -principal : principal,
+                  'date': isoDate(DateTime.now()),
+                  'note': cfg.title,
+                });
+              }
+            }
+            // Optional "paid from account": deduct the configured field's value as
+            // money OUT of the chosen account (e.g. cash spent buying an asset).
+            if (_showPaidFromAccount && _paidFromAccount != null) {
+              final spent =
+                  (values[cfg.principalAccountField!] as num?)?.toDouble() ?? 0;
+              if (spent != 0) {
+                await repo.insert('cash_moves', {
+                  'account': _paidFromAccount,
+                  'amount': -spent,
+                  'date': isoDate(DateTime.now()),
+                  'note': cfg.title,
+                });
+              }
+            }
           }
-        }
-        // Optional "paid from account": deduct the configured field's value as
-        // money OUT of the chosen account (e.g. cash spent buying an asset).
-        if (_showPaidFromAccount && _paidFromAccount != null) {
-          final spent =
-              (values[cfg.principalAccountField!] as num?)?.toDouble() ?? 0;
-          if (spent != 0) {
-            await repo.insert('cash_moves', {
-              'account': _paidFromAccount,
-              'amount': -spent,
-              'date': isoDate(DateTime.now()),
-              'note': cfg.title,
-            });
-          }
-        }
-      }
+        },
+      );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       setState(() => _error = e.toString());
@@ -1337,7 +2308,14 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
                 style: context.text.headlineSmall,
               ),
               const SizedBox(height: 18),
-              ...cfg.fields.map(_buildField),
+              for (var i = 0; i < cfg.fields.length; i++) ...[
+                if (_sectionFor(i) != null) ...[
+                  const SizedBox(height: 4),
+                  SectionLabel(_sectionFor(i)!),
+                  const SizedBox(height: 8),
+                ],
+                _buildField(cfg.fields[i]),
+              ],
               if (_showPrincipalAccount && _accountNames.isNotEmpty)
                 _buildPrincipalAccountPicker(),
               if (_showPaidFromAccount && _accountNames.isNotEmpty)
@@ -1429,14 +2407,55 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
     );
   }
 
+  /// The value the field's [FieldSpec.dependsOn] currently holds, as the form
+  /// sees it right now — not as the row was saved.
+  String _dependencyValue(FieldSpec f) {
+    final key = f.dependsOn;
+    if (key == null) return '';
+    return (_selects[key] ?? _controllers[key]?.text ?? '').trim().toLowerCase();
+  }
+
+  bool _isVisible(FieldSpec f) {
+    final blocker = f.hiddenWhenFilled;
+    if (blocker != null &&
+        (_controllers[blocker]?.text.trim().isNotEmpty ?? false)) {
+      return false;
+    }
+    final value = _dependencyValue(f);
+    if (f.hiddenWhen != null && f.hiddenWhen!.contains(value)) return false;
+    return f.visibleWhen == null || f.visibleWhen!.contains(value);
+  }
+
+  /// The heading to draw above [f], or null when it belongs to the group
+  /// already open. Sections are skipped when every field under them is hidden,
+  /// so a heading never floats above nothing.
+  String? _sectionFor(int index) {
+    final f = cfg.fields[index];
+    if (f.section == null || !_isVisible(f)) return null;
+    for (var i = index - 1; i >= 0; i--) {
+      final earlier = cfg.fields[i];
+      if (!_isVisible(earlier)) continue;
+      return earlier.section == f.section ? null : f.section;
+    }
+    return f.section;
+  }
+
+  /// Helper text for the current dependency value, falling back to the static
+  /// hint when the field doesn't vary or the value has no entry.
+  String? _hintFor(FieldSpec f) =>
+      f.hints?[_dependencyValue(f)] ?? f.hint;
+
   Widget _buildField(FieldSpec f) {
+    if (!_isVisible(f)) return const SizedBox.shrink();
     Widget child;
     switch (f.type) {
       case FieldType.text:
         child = TextFormField(
           controller: _controllers[f.key],
-          decoration: InputDecoration(labelText: f.label),
+          decoration:
+              InputDecoration(labelText: f.label, helperText: _hintFor(f)),
           validator: _req(f),
+          onChanged: _watched.contains(f.key) ? (_) => setState(() {}) : null,
         );
         break;
       case FieldType.number:
@@ -1447,8 +2466,10 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
           ],
-          decoration: InputDecoration(labelText: f.label),
+          decoration:
+              InputDecoration(labelText: f.label, helperText: _hintFor(f)),
           validator: _req(f),
+          onChanged: _watched.contains(f.key) ? (_) => setState(() {}) : null,
         );
         break;
       case FieldType.select:
@@ -1475,6 +2496,40 @@ class _EntrySheetState extends ConsumerState<_EntrySheet> {
           validator: f.required
               ? (v) => (v == null || v.isEmpty) ? 'Required' : null
               : null,
+        );
+        break;
+      case FieldType.fundSearch:
+        final picked = _schemes[f.key];
+        child = FormField<SchemeRef>(
+          initialValue: picked,
+          validator: f.required
+              ? (v) => v == null ? 'Pick a fund' : null
+              : null,
+          builder: (state) => InkWell(
+            onTap: () async {
+              final scheme = await FundPicker.show(context);
+              if (scheme == null) return;
+              setState(() => _schemes[f.key] = scheme);
+              state.didChange(scheme);
+            },
+            child: InputDecorator(
+              decoration: InputDecoration(
+                labelText: f.label,
+                errorText: state.errorText,
+                helperText: picked == null ? _hintFor(f) : 'Scheme ${picked.code}',
+                suffixIcon: const Icon(Icons.search, size: 20),
+              ),
+              child: Text(
+                picked?.name ?? 'Search for your fund',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: picked == null
+                    ? context.text.bodyLarge
+                        ?.copyWith(color: context.colors.textSecondary)
+                    : context.text.bodyLarge,
+              ),
+            ),
+          ),
         );
         break;
       case FieldType.date:

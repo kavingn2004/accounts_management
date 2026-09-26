@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/supabase_config.dart';
 import '../../core/theme.dart';
 
 /// Email + password sign in / sign up against Supabase Auth. Shown before the
@@ -43,7 +44,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final password = _password.text;
     try {
       if (_isSignUp) {
-        final res = await auth.signUp(email: email, password: password);
+        final res = await auth.signUp(
+          email: email,
+          password: password,
+          // Without this the confirmation link points at the project's Site
+          // URL, which defaults to localhost — a dead link for everyone who
+          // is not the developer.
+          emailRedirectTo: SupabaseConfig.emailRedirectTo,
+        );
         // If email confirmation is on, there's no session yet.
         if (res.session == null && mounted) {
           setState(() {

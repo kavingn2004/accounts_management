@@ -44,3 +44,22 @@ and download the **`.p8`** file.
 > Tip: for a first smoke test without any Apple setup, run the **`ios-unsigned`**
 > workflow — it confirms the app compiles on macOS (Simulator only, not
 > installable on a device).
+
+## 7. Ask on the phone (optional)
+
+The web build reaches its language model at `/api`, a relative path served by
+`netlify/functions/ask-llm.mjs`. A relative path means nothing on a phone, so
+the iOS build has to be given the absolute one — otherwise Ask quietly answers
+every question from its keyword router.
+
+Add the define to both `flutter build ios` lines in `codemagic.yaml`:
+
+```yaml
+script: |
+  flutter build ios --release --no-codesign \
+    --dart-define=ASK_LLM_URL=https://your-site.netlify.app/api
+```
+
+Leave it out and Ask still works — it just never uses a model. Never add
+`ASK_LLM_KEY`: an `.ipa` is as readable as a web bundle, which is the whole
+reason the key lives in the proxy.

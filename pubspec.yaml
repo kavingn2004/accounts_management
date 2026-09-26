@@ -20,6 +20,9 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   crypto: ^3.0.3
 
+  # Live investment prices (Yahoo, mfapi.in, CoinGecko)
+  http: ^1.2.0
+
   # Currency / date formatting
   intl: ^0.19.0
   fl_chart: ^1.2.0

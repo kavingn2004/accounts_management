@@ -57,9 +57,43 @@ class _FakeRepo implements FinanceRepository {
   Future<void> delete(String table, String id) async {}
 }
 
-Future<void> _pump(WidgetTester tester) async {
+/// Several rows under one payee, plus a row of the same payee outside the
+/// Month window, so the drill-down has both a grouping and a filter to prove.
+class _DetailRepo implements FinanceRepository {
+  static final rows = <Json>[
+    {'id': '1', 'payee': 'Groceries', 'amount': 1200, 'date': _today(),
+      'note': 'Weekly shop', 'account': 'HDFC'},
+    {'id': '2', 'payee': 'Groceries', 'amount': 800, 'date': _today(),
+      'note': 'Vegetables'},
+    {'id': '3', 'payee': 'Groceries', 'amount': 500, 'date': _today(),
+      'note': 'Milk and eggs'},
+    {'id': '4', 'payee': 'Groceries', 'amount': 9999,
+      'date': '${DateTime.now().year - 1}-01-15', 'note': 'Last year shop'},
+    {'id': '5', 'payee': 'Rent', 'amount': 32000, 'date': _today(),
+      'note': 'Flat'},
+  ];
+
+  @override
+  Future<Json?> dashboard() async => {'net_worth': 100000};
+
+  @override
+  Future<List<Json>> list(String table,
+          {String orderBy = 'created_at', bool ascending = false}) async =>
+      table == 'expenses' ? rows : [];
+
+  @override
+  Future<List<Json>> accountsWithBalances() async => [];
+  @override
+  Future<void> insert(String table, Json values) async {}
+  @override
+  Future<void> update(String table, String id, Json values) async {}
+  @override
+  Future<void> delete(String table, String id) async {}
+}
+
+Future<void> _pump(WidgetTester tester, [FinanceRepository? repo]) async {
   await tester.pumpWidget(ProviderScope(
-    overrides: [repoProvider.overrideWithValue(_FakeRepo())],
+    overrides: [repoProvider.overrideWithValue(repo ?? _FakeRepo())],
     child: MaterialApp(
       theme: AppTheme.light,
       home: const Scaffold(body: DashboardScreen()),
@@ -141,5 +175,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Gym'), findsNothing);
     expect(find.text('See more (3)'), findsOneWidget);
+  });
+
+  testWidgets('tapping a breakdown bar lists that payee for the period',
+      (tester) async {
+    tester.view.physicalSize = const Size(900, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await _pump(tester, _DetailRepo());
+
+    final scroll = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(find.text('Expense breakdown'), 200,
+        scrollable: scroll);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Groceries'));
+    await tester.pumpAndSettle();
+
+    // Every Groceries row inside the Month window, and only those: the same
+    // payee dated last year stays out, as does the other payee.
+    expect(find.text('Weekly shop'), findsOneWidget);
+    expect(find.text('Vegetables'), findsOneWidget);
+    expect(find.text('Milk and eggs'), findsOneWidget);
+    expect(find.text('Last year shop'), findsNothing);
+    expect(find.text('Flat'), findsNothing);
+
+    // The header names the window the figures came from, so the sheet can't be
+    // read as an all-time list.
+    expect(find.text('3 entries · this month'), findsOneWidget);
+    expect(find.text(money(1200)), findsOneWidget);
   });
 }

@@ -95,6 +95,11 @@ List<Bucket> buildBuckets(Period p, List<Json> income, List<Json> expenses) {
   return buckets;
 }
 
+/// The breakdown bar an expense row belongs to. Shared by the totals and the
+/// drill-down so a row can never be counted under one label and listed under
+/// another.
+String expenseSliceKey(Json r) => (r['payee'] ?? 'Unlabelled').toString();
+
 /// Expense totals grouped by payee within the period, largest first.
 ///
 /// Every payee is returned — no "Other" catch-all. The dashboard shows the
@@ -106,10 +111,23 @@ List<BreakdownSlice> buildExpenseBreakdown(Period p, List<Json> expenses) {
   for (final r in expenses) {
     final d = _parseDate(r['date']);
     if (d == null || !_inPeriod(d, p, now)) continue;
-    final key = (r['payee'] ?? 'Unlabelled').toString();
+    final key = expenseSliceKey(r);
     totals[key] = (totals[key] ?? 0) + _amount(r);
   }
   final entries = totals.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
   return entries.map((e) => BreakdownSlice(e.key, e.value)).toList();
+}
+
+/// The individual expenses behind one breakdown bar — same period window, same
+/// payee — newest first. Their amounts sum to that bar's value.
+List<Json> expensesInSlice(Period p, List<Json> expenses, String label) {
+  final now = DateTime.now();
+  final rows = expenses.where((r) {
+    final d = _parseDate(r['date']);
+    return d != null && _inPeriod(d, p, now) && expenseSliceKey(r) == label;
+  }).toList();
+  rows.sort((a, b) =>
+      (b['date'] ?? '').toString().compareTo((a['date'] ?? '').toString()));
+  return rows;
 }

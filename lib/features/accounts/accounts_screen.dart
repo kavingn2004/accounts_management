@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/charts.dart';
 import '../../core/components.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/finance_repository.dart';
+import '../../data/history.dart';
 import '../../services/providers.dart';
+import '../common/module_metrics.dart';
+import 'account_metrics.dart';
 
 /// Cash + bank accounts with their live computed balances.
 class AccountsScreen extends ConsumerStatefulWidget {
@@ -18,6 +22,7 @@ class AccountsScreen extends ConsumerStatefulWidget {
 
 class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   late Future<List<Json>> _future;
+  late Future<Series?> _chart;
 
   static const _toneFor = {
     'cash': ModuleTone.bills,
@@ -31,7 +36,30 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   }
 
   void _reload() {
-    _future = ref.read(repoProvider).accountsWithBalances();
+    final repo = ref.read(repoProvider);
+    _future = repo.accountsWithBalances();
+    _chart = _loadChart(repo);
+  }
+
+  /// Balance over time, walked from the dated movements the app already keeps.
+  /// Accounts is the one page that needs no ledger — every movement against an
+  /// account carries a date.
+  Future<Series?> _loadChart(FinanceRepository repo) async {
+    final lists = await Future.wait([
+      repo.list('accounts'),
+      repo.list('income'),
+      repo.list('expenses'),
+      repo.list('transfers'),
+      repo.list('cash_moves'),
+    ]);
+    return accountBalanceSeries(
+      accounts: lists[0],
+      income: lists[1],
+      expenses: lists[2],
+      transfers: lists[3],
+      cashMoves: lists[4],
+      now: DateTime.now(),
+    );
   }
   Future<void> _refresh() async {
     setState(_reload);
@@ -94,12 +122,16 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                       double.tryParse(openC.text.trim()) ?? 0,
                 };
                 final repo = ref.read(repoProvider);
-                if (existing == null) {
-                  await repo.insert('accounts', values);
-                } else {
-                  await repo.update(
-                      'accounts', existing['id'].toString(), values);
-                }
+                await recordAction(
+                  repo,
+                  label: '${existing == null ? 'Added' : 'Edited'} account · '
+                      '${values['name']}',
+                  table: 'accounts',
+                  body: () => existing == null
+                      ? repo.insert('accounts', values)
+                      : repo.update(
+                          'accounts', existing['id'].toString(), values),
+                );
                 ref.read(dataRevisionProvider.notifier).state++;
                 if (ctx.mounted) Navigator.pop(ctx);
               },
@@ -135,7 +167,13 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
       ),
     );
     if (ok != true) return;
-    await ref.read(repoProvider).delete('accounts', a['id'].toString());
+    final repo = ref.read(repoProvider);
+    await recordAction(
+      repo,
+      label: 'Deleted account · ${a['name']}',
+      table: 'accounts',
+      body: () => repo.delete('accounts', a['id'].toString()),
+    );
     _refresh();
   }
 
@@ -173,6 +211,29 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                         style: context.text.displayLarge),
                   ],
                 ),
+                const SizedBox(height: 16),
+                if (accounts.isNotEmpty)
+                  AppCard(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    child: FutureBuilder<Series?>(
+                      future: _chart,
+                      builder: (context, chartSnap) {
+                        final series = chartSnap.data;
+                        if (series == null) {
+                          return const ChartEmptyState(
+                            message: 'Movements you record will appear here.',
+                          );
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SectionLabel('Balance over time'),
+                            SeriesChart(series: series),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
                 const SizedBox(height: 20),
                 if (accounts.isEmpty)
                   const EmptyState(

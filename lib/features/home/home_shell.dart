@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../alerts/alert_providers.dart';
+import '../ask/ask_button.dart';
 import '../alerts/alerts_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../profile/profile_screen.dart';
@@ -41,6 +42,7 @@ class HomeShell extends ConsumerWidget {
         ],
       ),
       body: const DashboardScreen(),
+      floatingActionButton: const AskButton(),
     );
   }
 }

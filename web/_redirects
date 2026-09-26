@@ -1,1 +1,5 @@
+# Ask's model proxy, before the SPA fallback: the first match wins, and /*
+# matches everything. Kept in step with netlify.toml.
+/api/*  /.netlify/functions/ask-llm  200
+
 /*    /index.html   200

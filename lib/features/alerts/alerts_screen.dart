@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/components.dart';
 import '../../core/theme.dart';
+import '../../data/history.dart';
 import '../../services/providers.dart';
 import 'alert_model.dart';
 import 'alert_providers.dart';
@@ -57,13 +58,19 @@ class AlertsScreen extends ConsumerWidget {
             FilledButton(
               onPressed: () async {
                 if (titleC.text.trim().isEmpty) return;
-                await ref.read(repoProvider).insert('alerts', {
-                  'title': titleC.text.trim(),
-                  'message': msgC.text.trim(),
-                  'severity': sev.name,
-                  'type': 'custom',
-                  'created_at': DateTime.now().toIso8601String(),
-                });
+                final repo = ref.read(repoProvider);
+                await recordAction(
+                  repo,
+                  label: 'Added alert · ${titleC.text.trim()}',
+                  table: 'alerts',
+                  body: () => repo.insert('alerts', {
+                    'title': titleC.text.trim(),
+                    'message': msgC.text.trim(),
+                    'severity': sev.name,
+                    'type': 'custom',
+                    'created_at': DateTime.now().toIso8601String(),
+                  }),
+                );
                 if (ctx.mounted) Navigator.pop(ctx, true);
               },
               child: const Text('Add'),
@@ -134,7 +141,13 @@ class AlertsScreen extends ConsumerWidget {
                   onDelete: () async {
                     if (a.isCustom) {
                       // Stored alert — really delete it.
-                      await ref.read(repoProvider).delete('alerts', a.id!);
+                      final repo = ref.read(repoProvider);
+                      await recordAction(
+                        repo,
+                        label: 'Deleted alert · ${a.title}',
+                        table: 'alerts',
+                        body: () => repo.delete('alerts', a.id!),
+                      );
                       ref.invalidate(alertsProvider);
                     } else {
                       // Computed alert — dismiss for this session.

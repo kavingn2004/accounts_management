@@ -7,9 +7,10 @@
 #
 #   SUPABASE_URL       = https://<project>.supabase.co
 #   SUPABASE_ANON_KEY  = <anon public key>
+#   GROQ_API_KEY       = <key for the Ask proxy; read only by the function>
 #
-# When those are absent the app falls back to on-device storage (no login),
-# so a deploy without them still works for a demo.
+# When those are absent the app falls back to on-device storage (no login) and
+# Ask falls back to keyword routing, so a deploy without them still works.
 
 [build]
   publish = "build/web"
@@ -24,14 +25,29 @@
     flutter pub get
     flutter build web --release \
       --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-      --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+      --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+      --dart-define=ASK_LLM_URL="${ASK_LLM_URL:-/api}" \
+      --dart-define=ASK_LLM_MODEL=""
   '''
+
+# The Ask proxy lives here; Netlify finds and deploys it with the site.
+[functions]
+  directory = "netlify/functions"
 
 [build.environment]
   # Pin to the same stable Flutter the project is developed against. Keep this
   # equal to the local SDK (`flutter --version`) — the app is only ever tested
   # against that one, and a CI-only version skew is a miserable thing to debug.
   FLUTTER_VERSION = "3.44.8"
+
+# Ask's model proxy. The app is built with ASK_LLM_URL=/api and its client
+# appends /chat/completions, so this is the address it posts to. It must stay
+# above the SPA fallback: the first matching rule wins, and /* matches
+# everything — a question would otherwise be answered with index.html.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/ask-llm"
+  status = 200
 
 # SPA fallback: every path serves the Flutter app shell. This is also provided
 # by web/_redirects (copied into build/web); declared here too for visibility.

@@ -1,5 +1,25 @@
 import 'finance_repository.dart';
 
+/// What one investment row is worth.
+///
+/// `current_value` when a figure has been stated — typed in, or written by the
+/// live-price sync. Otherwise **what the holding cost**, because a row with no
+/// stated value is not a row worth nothing. Two ways that legitimately happens:
+///
+///  - the row was added with only an invested amount (the field is optional);
+///  - a SIP was created today and the fund has not published a NAV to allot
+///    at yet, so it holds no units even though the money has left the account.
+///
+/// Reading zero in either case understates the portfolio by the entire cost of
+/// the holding, on the row and in net worth alike. A deliberate zero is left
+/// alone: a written-off holding is worth zero and must stay so.
+double investmentValue(Json row) {
+  final stated = row['current_value'];
+  if (stated is num) return stated.toDouble();
+  final cost = row['total_invested'] ?? row['invested_amount'];
+  return cost is num ? cost.toDouble() : 0;
+}
+
 /// Pure balance & dashboard computations shared by every [FinanceRepository]
 /// implementation, so on-device and Supabase storage produce identical numbers.
 ///
@@ -81,9 +101,20 @@ class FinanceMath {
         .fold(0.0, (a, r) => a + ((r['amount'] as num?)?.toDouble() ?? 0));
 
     final accountsTotal = balances.values.fold(0.0, (a, b) => a + b);
-    final investmentsTotal = sum(investments, 'current_value');
-    final investedTotal = sum(investments, 'invested_amount');
+    final investmentsTotal =
+        investments.fold(0.0, (a, r) => a + investmentValue(r));
+    // `total_invested` is the running sum of every contribution (see the
+    // investment module's cumulativeIncrementField). Rows created before that
+    // column existed fall back to `invested_amount`, which held the same figure.
+    final investedTotal = investments.fold(
+        0.0,
+        (a, r) =>
+            a +
+            (((r['total_invested'] ?? r['invested_amount']) as num?)
+                    ?.toDouble() ??
+                0));
     final savings = sum(savingsGoals, 'saved_amount');
+    final savingsTarget = sum(savingsGoals, 'target_amount');
     final receivable = sumOwed(debtors);
     final payable = sumOwed(creditors);
     final billsTotal = sum(bills, 'amount');
@@ -103,8 +134,13 @@ class FinanceMath {
       'debt_worth': receivable, // owed to you (debtors / collections)
       'credit_worth': payable + billsTotal, // you owe (creditors + bills)
       'saving_worth': savings, // savings goals set aside
+      'saving_target': savingsTarget, // combined goal targets
       'investment_worth': investmentsTotal, // current value of holdings
       'invested_total': investedTotal, // total amount put in
+      'bills_total': billsTotal, // recurring bills folded into credit_worth
+      // Subtracted by net_worth above, so anything itemising that figure needs
+      // it: without this the parts cannot be made to add up to the whole.
+      'loans_total': loansTotal,
       'month_income': sum(income, 'amount'),
       'month_expense': sum(expenses, 'amount'),
     };

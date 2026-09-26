@@ -58,7 +58,7 @@ declare
   app_tables text[] := array[
     'accounts','income','expenses','savings_goals','investments',
     'debtors','creditors','bills','loans','transfers','cash_moves',
-    'debt_payments','alerts'
+    'debt_payments','sip_installments','alerts'
   ];
 begin
   foreach t in array app_tables loop

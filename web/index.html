@@ -31,8 +31,137 @@
 
   <title>Accounflow</title>
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    Boot splash. The Flutter engine is a few MB of JS/WASM, so on a cold load
+    the page would otherwise sit blank for seconds with no sign of life. This
+    is plain HTML/CSS in the document head so it paints on the first frame,
+    long before any Dart runs, and tears itself down on `flutter-first-frame`.
+
+    Colours mirror AppColors in lib/core/theme.dart (ivory/clay paper theme)
+    and follow the system light/dark preference, which is what the app itself
+    defaults to (themeModeProvider = ThemeMode.system) — so the handover from
+    splash to app is seamless rather than a flash of the wrong ground.
+  -->
+  <style>
+    :root {
+      --boot-bg: #F5F1EB;
+      --boot-surface: #FFFDFA;
+      --boot-border: #E4DDD2;
+      --boot-text: #1F1E1C;
+      --boot-muted: #6B655C;
+      --boot-accent: #B85536;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --boot-bg: #1A1917;
+        --boot-surface: #232120;
+        --boot-border: #35322E;
+        --boot-text: #EDE9E3;
+        --boot-muted: #A39C92;
+        --boot-accent: #D97757;
+      }
+    }
+
+    body { margin: 0; background: var(--boot-bg); }
+
+    #boot {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      background: var(--boot-bg);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      transition: opacity .32s ease;
+    }
+    /* Faded out but not yet removed: must not swallow taps meant for the app. */
+    #boot.boot--done { opacity: 0; pointer-events: none; }
+
+    #boot .boot__mark {
+      width: 76px;
+      height: 76px;
+      border-radius: 20px;
+      background: var(--boot-surface);
+      border: 1px solid var(--boot-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    #boot .boot__mark img { width: 100%; height: 100%; object-fit: cover; }
+
+    #boot .boot__name {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 25px;
+      letter-spacing: .2px;
+      color: var(--boot-text);
+    }
+
+    /* Indeterminate bar: a track with a sliding fill. Deliberately a bar and
+       not a spinner — it echoes the app's own progress bars. */
+    #boot .boot__track {
+      position: relative;
+      width: 132px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--boot-border);
+      overflow: hidden;
+    }
+    #boot .boot__track::after {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 42%;
+      border-radius: 999px;
+      background: var(--boot-accent);
+      animation: boot-slide 1.15s ease-in-out infinite;
+    }
+    /* The fill is 42% of the track, so a full sweep is ~138% of its own width.
+       Stopping at 240% keeps it on the track for most of the cycle instead of
+       leaving a long empty beat at each end. */
+    @keyframes boot-slide {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(240%); }
+    }
+
+    #boot .boot__label {
+      font-size: 12.5px;
+      letter-spacing: .3px;
+      color: var(--boot-muted);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #boot { transition: none; }
+      #boot .boot__track::after { animation: none; width: 100%; }
+    }
+  </style>
 </head>
 <body>
+  <div id="boot" role="status" aria-live="polite" aria-label="Loading Accounflow">
+    <div class="boot__mark"><img src="icons/Icon-192.png" alt="" /></div>
+    <div class="boot__name">Accounflow</div>
+    <div class="boot__track"></div>
+    <div class="boot__label">Loading&hellip;</div>
+  </div>
+
+  <script>
+    // Flutter fires `flutter-first-frame` on window once it has painted, which
+    // is the only signal that the app is genuinely on screen rather than merely
+    // downloaded. Fade, then remove so the node can't intercept input.
+    (function () {
+      var boot = document.getElementById('boot');
+      if (!boot) return;
+      window.addEventListener('flutter-first-frame', function () {
+        boot.classList.add('boot--done');
+        setTimeout(function () { boot.remove(); }, 360);
+      });
+    })();
+  </script>
+
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
